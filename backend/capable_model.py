@@ -65,6 +65,15 @@ def load_capable_model():
         _model = AutoModelForCausalLM.from_pretrained(
             MASL_MODEL_ID, trust_remote_code=True
         ).to(DEVICE)
+
+        # Florence-2 remote code predates the `_supports_sdpa` attribute that
+        # newer transformers expects on PreTrainedModel. Add it if missing.
+        try:
+            if not hasattr(_model, "_supports_sdpa"):
+                _model._supports_sdpa = False
+        except Exception:
+            pass
+
         _model.eval()
         _available = True
         print("[capable] Florence-2 loaded successfully.")
