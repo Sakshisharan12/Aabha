@@ -20,11 +20,14 @@ Aabha features a modern, fully accessible React **Next.js (App Router)** fronten
 
 1. **Custom ViT Object Classifier**: A Vision Transformer built from scratch (Patch Embedding → CLS Token → Positional Embedding → Multi-Head Self-Attention → MLP → Encoder Blocks → Classification Head), trained on CIFAR-10 for object recognition.
 2. **AI Scene Captioning**: Uses the pre-trained `Salesforce/blip-image-captioning-base` for natural language scene descriptions.
-3. **Live Camera Detection**: Real-time object detection from webcam with auto-speak — captures frames, classifies objects, describes the scene, and narrates aloud automatically.
-4. **Audio Narration**: Converts descriptions into natural-sounding speech using Microsoft Edge Neural TTS (`edge-tts`).
-5. **Multilingual Support**: Supports English, Hindi, and Marathi (powered by `googletrans`).
-6. **Visual Question Answering (VQA)**: Ask questions about uploaded images and receive spoken answers.
-7. **WCAG-Compliant Frontend**: High contrast, screen-reader friendly (ARIA labels), fully keyboard navigable.
+3. **🆚 Hybrid Head-to-Head Comparison**: Every image is analyzed by **two pipelines running in parallel** and shown side-by-side in the UI:
+   - **Ours** — the from-scratch custom ViT (single 10-class label) + BLIP caption.
+   - **Capable** — `microsoft/Florence-2` for open-vocabulary object detection (with bounding boxes overlaid on the image) + detailed captioning.
+4. **Live Camera Detection**: Real-time object detection from webcam with auto-speak — captures frames, runs both comparison pipelines, and narrates aloud automatically.
+5. **Audio Narration**: Converts descriptions into natural-sounding speech using Microsoft Edge Neural TTS (`edge-tts`).
+6. **Multilingual Support**: Supports English, Hindi, and Marathi (powered by `googletrans`).
+7. **Visual Question Answering (VQA)**: Ask questions about uploaded images and receive spoken answers.
+8. **WCAG-Compliant Frontend**: High contrast, screen-reader friendly (ARIA labels), fully keyboard navigable.
 
 ---
 
@@ -52,7 +55,7 @@ The `vision_transformer_scratch/` directory contains a complete ViT implementati
 - **Frontend**: Next.js (App Router), React, Vanilla CSS (Glassmorphism theme), Lucide Icons.
 - **Backend API**: FastAPI (Python 3.10+).
 - **Custom Model**: Vision Transformer built from scratch with PyTorch.
-- **Pre-trained Model**: Hugging Face Transformers (`BLIP`) for captioning and VQA.
+- **Pre-trained Models**: Hugging Face Transformers — `BLIP` (captioning + VQA) and `Florence-2` (open-vocabulary detection + detailed captioning).
 - **Text-to-Speech**: `edge-tts` (Microsoft Edge Neural TTS).
 - **Translation**: `googletrans` (free Google Translate wrapper).
 
@@ -154,8 +157,9 @@ python vit.py
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/health` | Health check |
-| `POST` | `/api/caption` | Upload image → caption + classification + audio |
-| `POST` | `/api/detect` | Camera frame (base64) → detection + audio |
+| `GET` | `/api/models` | Report which models (ours + capable) are loaded |
+| `POST` | `/api/caption` | Upload image → `{ours, capable}` comparison + per-panel audio |
+| `POST` | `/api/detect` | Camera frame (base64) → `{ours, capable}` comparison + audio |
 | `POST` | `/api/chat` | Image + question → VQA answer + audio |
 
 ---
