@@ -155,6 +155,20 @@ export default function Home() {
   const [results, setResults] = useState(null);
   const [announcement, setAnnouncement] = useState('');
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const [loadingStep, setLoadingStep] = useState(0);
+
+  // Rotating status hints while the dual pipelines run
+  const LOADING_MESSAGES = [
+    'Reading your image...',
+    'Running our ViT + BLIP...',
+    'Querying Florence-2...',
+    'Synthesizing narration...',
+  ];
+  useEffect(() => {
+    if (!loading) { setLoadingStep(0); return; }
+    const t = setInterval(() => setLoadingStep((i) => (i + 1) % LOADING_MESSAGES.length), 2600);
+    return () => clearInterval(t);
+  }, [loading]);
 
   // VQA Chat state
   const [chatHistory, setChatHistory] = useState([]);
@@ -878,7 +892,7 @@ export default function Home() {
             {loading && (
               <div id="loading-spinner" className="spinner-container" role="status" aria-live="polite">
                 <BrailleLoader />
-                <p id="loading-text" className="loading-message">Reading your image...</p>
+                <p id="loading-text" className="loading-message">{LOADING_MESSAGES[loadingStep]}</p>
               </div>
             )}
 
