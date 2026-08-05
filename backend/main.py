@@ -1,24 +1,28 @@
 """
-main.py — FastAPI Backend for AI Caption Generator
+main.py — FastAPI Backend for Aabha (Accessible AI Vision Assistant)
 
-Serves the REST API that the Next.js frontend calls:
-  POST /api/caption   — Upload image, get caption + audio back
+Endpoints:
+  POST /api/caption   — Upload image, get caption + classification + audio
+  POST /api/detect    — Send camera frame (base64), get detection + audio (fast path)
+  POST /api/chat      — Ask a question about an image, get answer + audio
   GET  /api/health    — Health check
 
-The BLIP model is loaded once at startup and kept in memory.
+Models:
+  - BLIP (Salesforce/blip-image-captioning-base) for captioning + VQA
+  - Custom ViT (trained from scratch on CIFAR-10) for classification
 """
 
 import base64
 import os
+import io
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
-import io
 
-from multi_caption_model import load_models, generate_all_captions, compile_captions, generate_answer
+from vision_model import load_models, generate_caption, classify_image, generate_answer, describe_scene
 from tts import caption_to_audio
 from translate import translate_caption
 
@@ -28,19 +32,18 @@ from translate import translate_caption
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the captioning models at startup, clean up on shutdown."""
+    """Load the captioning and classification models at startup."""
     load_models()
     yield
-    # Cleanup (if needed) goes here
 
 
 # ---------------------------------------------------------------------------
 # Create the FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="AI Caption Generator API",
-    description="Accessible image-to-speech captioning API powered by BLIP",
-    version="1.0.0",
+    title="Aabha - Accessible AI Vision Assistant API",
+    description="Image captioning, object classification, and VQA for visually impaired users",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -71,10 +74,13 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 # ---------------------------------------------------------------------------
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint — returns 200 if the server and models are ready."""
+    """Health check — returns 200 if the server and models are ready."""
     return {
         "status": "healthy",
-        "models": ["blip-image-captioning-base", "git-base", "vit-gpt2-image-captioning"]
+        "models": {
+            "blip": "Salesforce/blip-image-captioning-base",
+            "custom_vit": "ViT-Tiny (CIFAR-10, trained from scratch)",
+        }
     }
 
 
@@ -82,15 +88,13 @@ async def health_check():
 async def create_caption(
     file: UploadFile = File(..., description="Image file (JPG, PNG, or WEBP, max 10MB)"),
     lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
+    model_choice: str = Form(default="combined", description="Model choice: 'combined', 'vit', or 'blip'"),
 ):
     """
-    Upload an image and receive a caption + audio.
-
-    - Validates file type and size.
-    - Generates an English caption using BLIP.
-    - Optionally translates to Hindi or Marathi.
-    - Generates TTS audio for the final caption.
-    - Returns everything as JSON (audio is base64-encoded).
+    Upload an image and receive:
+    - BLIP caption (scene description)
+    - Custom ViT classification (object detection)
+    - TTS audio narration
     """
 
     # --- Validate file extension ---
@@ -122,35 +126,36 @@ async def create_caption(
             detail="Could not open the file as an image. It may be corrupted or not a valid image format.",
         )
 
-    # --- Generate English captions from multiple models ---
+    # --- Generate scene description (BLIP caption + ViT classification) ---
     try:
-        captions = generate_all_captions(image)
-        caption_en = compile_captions(captions)
+        scene = describe_scene(image, model_choice=model_choice)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Caption generation failed unexpectedly: {str(e)}",
+            detail=f"Scene analysis failed: {str(e)}",
         )
 
     # --- Translate if Hindi or Marathi is requested ---
     caption_translated = None
+    description_translated = None
     if lang in ["hi", "mr"]:
         try:
-            caption_translated = translate_caption(caption_en, target_lang=lang)
+            caption_translated = translate_caption(scene["caption"], target_lang=lang)
+            description_translated = translate_caption(scene["description"], target_lang=lang)
         except RuntimeError as e:
-            # Translation failed — still return the English caption + a warning
             caption_translated = None
+            description_translated = None
             print(f"Translation warning: {e}")
 
-    # --- Determine the final caption for TTS ---
-    final_caption = caption_translated if caption_translated else caption_en
-    tts_lang = lang if (lang in ["hi", "mr"] and caption_translated) else "en"
+    # --- Determine the final text for TTS ---
+    final_text = description_translated if description_translated else scene["description"]
+    tts_lang = lang if (lang in ["hi", "mr"] and description_translated) else "en"
 
     # --- Generate audio ---
     try:
-        audio_bytes = await caption_to_audio(final_caption, lang=tts_lang)
+        audio_bytes = await caption_to_audio(final_text, lang=tts_lang)
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
     except (ValueError, RuntimeError) as e:
         raise HTTPException(
@@ -161,9 +166,92 @@ async def create_caption(
     # --- Return the response ---
     return JSONResponse(
         content={
-            "caption_en": caption_en,  # Fused consensus description
-            "captions": captions,      # Individual model descriptions
+            "caption_en": scene["caption"],
+            "description": scene["description"],
+            "classification": scene["classification"],
             "caption_translated": caption_translated,
+            "lang": tts_lang,
+            "audio_base64": audio_base64,
+            "audio_format": "mp3",
+        }
+    )
+
+
+@app.post("/api/detect")
+async def detect_from_frame(
+    frame: str = Form(..., description="Base64-encoded camera frame (JPEG/PNG)"),
+    lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
+    model_choice: str = Form(default="combined", description="Model choice: 'combined', 'vit', or 'blip'"),
+):
+    """
+    Detect objects from a live camera frame.
+
+    Accepts a base64-encoded image frame (from webcam capture).
+    Returns classification + caption + audio for blind user narration.
+    Optimized for speed in the live camera loop.
+    """
+
+    # --- Decode the base64 frame ---
+    try:
+        # Handle data URL format: "data:image/jpeg;base64,/9j/4AAQ..."
+        if "," in frame:
+            frame = frame.split(",", 1)[1]
+        frame_bytes = base64.b64decode(frame)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid base64-encoded frame.",
+        )
+
+    if len(frame_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty frame received.")
+
+    if len(frame_bytes) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Frame is too large.")
+
+    # --- Open the image ---
+    try:
+        image = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not decode the frame as an image.",
+        )
+
+    # --- Generate scene description ---
+    try:
+        scene = describe_scene(image, model_choice=model_choice)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Detection failed: {str(e)}",
+        )
+
+    # --- Translate if needed ---
+    description_for_tts = scene["description"]
+    tts_lang = "en"
+    if lang in ["hi", "mr"]:
+        try:
+            description_for_tts = translate_caption(scene["description"], target_lang=lang)
+            tts_lang = lang
+        except RuntimeError:
+            pass  # Fall back to English
+
+    # --- Generate audio ---
+    try:
+        audio_bytes = await caption_to_audio(description_for_tts, lang=tts_lang)
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Audio generation failed: {str(e)}",
+        )
+
+    return JSONResponse(
+        content={
+            "caption": scene["caption"],
+            "classification": scene["classification"],
+            "description": scene["description"],
             "lang": tts_lang,
             "audio_base64": audio_base64,
             "audio_format": "mp3",
