@@ -2,16 +2,19 @@
 main.py — FastAPI Backend for Aabha (Accessible AI Vision Assistant)
 
 Endpoints:
-  POST /api/caption   — Upload image, get caption + classification + audio
-  POST /api/detect    — Send camera frame (base64), get detection + audio (fast path)
+  POST /api/caption   — Upload image, get OURS vs CAPABLE comparison + audio
+  POST /api/detect    — Send camera frame (base64), get comparison + audio (fast path)
   POST /api/chat      — Ask a question about an image, get answer + audio
+  GET  /api/models    — Report which models are loaded
   GET  /api/health    — Health check
 
 Models:
-  - BLIP (Salesforce/blip-image-captioning-base) for captioning + VQA
-  - Custom ViT (trained from scratch on CIFAR-10) for classification
+  - OURS:    Custom ViT (CIFAR-10, from scratch) + BLIP (captioning + VQA)
+  - CAPABLE: Florence-2 (open-vocabulary detection + detailed captioning)
+  Both pipelines run concurrently per request (see analyze_comparison).
 """
 
+import asyncio
 import base64
 import os
 import io
@@ -22,7 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 
-from vision_model import load_models, generate_caption, classify_image, generate_answer, describe_scene
+from vision_model import load_models, generate_answer, analyze_comparison
+import capable_model
 from tts import caption_to_audio
 from translate import translate_caption
 
@@ -32,8 +36,9 @@ from translate import translate_caption
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the captioning and classification models at startup."""
+    """Load the captioning, classification, and capable models at startup."""
     load_models()
+    capable_model.load_capable_model()
     yield
 
 
@@ -70,8 +75,46 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+async def _build_audio_payload(text: str, lang: str) -> dict:
+    """Translate (if needed), synthesize speech, and build a per-panel audio payload."""
+    translated = None
+    if lang in ["hi", "mr"]:
+        try:
+            translated = translate_caption(text, target_lang=lang)
+        except RuntimeError as e:
+            translated = None
+            print(f"Translation warning: {e}")
+
+    final_text = translated if translated else text
+    tts_lang = lang if (lang in ["hi", "mr"] and translated) else "en"
+    audio_bytes = await caption_to_audio(final_text, lang=tts_lang)
+    return {
+        "text_for_tts": final_text,
+        "translated": translated,
+        "lang": tts_lang,
+        "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
+        "audio_format": "mp3",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@app.get("/api/models")
+async def models_status():
+    """Report which models are loaded and ready."""
+    return {
+        "ours": {
+            "blip": "Salesforce/blip-image-captioning-base",
+            "custom_vit": "ViT-Tiny (CIFAR-10, trained from scratch)",
+            "vit_available": True,
+        },
+        "capable": capable_model.get_status(),
+    }
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check — returns 200 if the server and models are ready."""
@@ -80,6 +123,7 @@ async def health_check():
         "models": {
             "blip": "Salesforce/blip-image-captioning-base",
             "custom_vit": "ViT-Tiny (CIFAR-10, trained from scratch)",
+            "capable": capable_model.get_status()["model"],
         }
     }
 
@@ -126,9 +170,9 @@ async def create_caption(
             detail="Could not open the file as an image. It may be corrupted or not a valid image format.",
         )
 
-    # --- Generate scene description (BLIP caption + ViT classification) ---
+    # --- Generate OURS vs CAPABLE comparison (runs concurrently) ---
     try:
-        scene = describe_scene(image, model_choice=model_choice)
+        comparison = await analyze_comparison(image, model_choice=model_choice)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -137,42 +181,42 @@ async def create_caption(
             detail=f"Scene analysis failed: {str(e)}",
         )
 
-    # --- Translate if Hindi or Marathi is requested ---
-    caption_translated = None
-    description_translated = None
-    if lang in ["hi", "mr"]:
-        try:
-            caption_translated = translate_caption(scene["caption"], target_lang=lang)
-            description_translated = translate_caption(scene["description"], target_lang=lang)
-        except RuntimeError as e:
-            caption_translated = None
-            description_translated = None
-            print(f"Translation warning: {e}")
+    ours = comparison["ours"]
+    capable = comparison["capable"]
 
-    # --- Determine the final text for TTS ---
-    final_text = description_translated if description_translated else scene["description"]
-    tts_lang = lang if (lang in ["hi", "mr"] and description_translated) else "en"
-
-    # --- Generate audio ---
+    # --- Build per-panel TTS audio (translated per language) concurrently ---
     try:
-        audio_bytes = await caption_to_audio(final_text, lang=tts_lang)
-        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+        ours_audio_task = asyncio.create_task(_build_audio_payload(ours["description"], lang))
+        capable_audio_task = (
+            asyncio.create_task(_build_audio_payload(capable.get("caption") or "An image.", lang))
+            if capable["available"]
+            else None
+        )
+        ours_audio = await ours_audio_task
+        capable_audio = await capable_audio_task if capable_audio_task else None
     except (ValueError, RuntimeError) as e:
         raise HTTPException(
             status_code=500,
             detail=f"Audio generation failed: {str(e)}",
         )
 
-    # --- Return the response ---
+    # --- Return the comparison response ---
     return JSONResponse(
         content={
-            "caption_en": scene["caption"],
-            "description": scene["description"],
-            "classification": scene["classification"],
-            "caption_translated": caption_translated,
-            "lang": tts_lang,
-            "audio_base64": audio_base64,
-            "audio_format": "mp3",
+            "ours": {
+                "caption_en": ours["caption"],
+                "description": ours["description"],
+                "classification": ours["classification"],
+                "model_choice": ours["model_choice"],
+                **ours_audio,
+            },
+            "capable": {
+                "available": capable["available"],
+                "caption": capable.get("caption") or "",
+                "detections": capable.get("detections") or [],
+                "error": capable.get("error"),
+                **(capable_audio if capable_audio else {}),
+            },
         }
     )
 
@@ -218,29 +262,28 @@ async def detect_from_frame(
             detail="Could not decode the frame as an image.",
         )
 
-    # --- Generate scene description ---
+    # --- Generate OURS vs CAPABLE comparison (runs concurrently) ---
     try:
-        scene = describe_scene(image, model_choice=model_choice)
+        comparison = await analyze_comparison(image, model_choice=model_choice)
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Detection failed: {str(e)}",
         )
 
-    # --- Translate if needed ---
-    description_for_tts = scene["description"]
-    tts_lang = "en"
-    if lang in ["hi", "mr"]:
-        try:
-            description_for_tts = translate_caption(scene["description"], target_lang=lang)
-            tts_lang = lang
-        except RuntimeError:
-            pass  # Fall back to English
+    ours = comparison["ours"]
+    capable = comparison["capable"]
 
-    # --- Generate audio ---
+    # --- Build per-panel TTS audio concurrently ---
     try:
-        audio_bytes = await caption_to_audio(description_for_tts, lang=tts_lang)
-        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+        ours_audio_task = asyncio.create_task(_build_audio_payload(ours["description"], lang))
+        capable_audio_task = (
+            asyncio.create_task(_build_audio_payload(capable.get("caption") or "An image.", lang))
+            if capable["available"]
+            else None
+        )
+        ours_audio = await ours_audio_task
+        capable_audio = await capable_audio_task if capable_audio_task else None
     except (ValueError, RuntimeError) as e:
         raise HTTPException(
             status_code=500,
@@ -249,12 +292,20 @@ async def detect_from_frame(
 
     return JSONResponse(
         content={
-            "caption": scene["caption"],
-            "classification": scene["classification"],
-            "description": scene["description"],
-            "lang": tts_lang,
-            "audio_base64": audio_base64,
-            "audio_format": "mp3",
+            "ours": {
+                "caption_en": ours["caption"],
+                "description": ours["description"],
+                "classification": ours["classification"],
+                "model_choice": ours["model_choice"],
+                **ours_audio,
+            },
+            "capable": {
+                "available": capable["available"],
+                "caption": capable.get("caption") or "",
+                "detections": capable.get("detections") or [],
+                "error": capable.get("error"),
+                **(capable_audio if capable_audio else {}),
+            },
         }
     )
 
