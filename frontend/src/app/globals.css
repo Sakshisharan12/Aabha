@@ -1330,3 +1330,128 @@ body {
     border-color: var(--color-primary-border);
     background: var(--color-primary-bg);
 }
+
+/* ===== Hybrid Comparison (Ours vs Capable) ===== */
+.compare-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    padding: 1.25rem 1.35rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.04);
+    transition: var(--transition);
+}
+
+.compare-panel-ours {
+    border-top: 3px solid var(--color-primary);
+}
+
+.compare-panel-capable {
+    border-top: 3px solid var(--color-accent);
+}
+
+.compare-panel.is-muted {
+    opacity: 0.7;
+}
+
+.compare-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.compare-panel-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text);
+}
+
+.compare-panel-name {
+    font-weight: 700;
+    font-family: var(--font-heading);
+    font-size: 0.9rem;
+}
+
+.compare-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
+    white-space: nowrap;
+}
+
+.compare-panel-capable .compare-badge {
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+}
+
+/* Detection chips (capable panel) */
+.detection-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.detection-chips-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-muted);
+}
+
+.chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+.detection-chip {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-accent);
+    background: var(--color-accent-bg);
+    border: 1px solid rgba(232, 115, 74, 0.25);
+    border-radius: 999px;
+    padding: 0.3rem 0.7rem;
+}
+
+.box-detect-note {
+    margin-top: 0.75rem;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.detection-overlay-capable {
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--color-accent);
+    font-weight: 600;
+}
+
+/* Camera comparison grid */
+.camera-compare-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+}
+
+@media (min-width: 900px) {
+    .camera-compare-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
