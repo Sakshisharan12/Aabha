@@ -33,11 +33,18 @@ import capable_model
 from tts import caption_to_audio
 from translate import translate_caption
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("aabha")
+
+# In-process rate limiter keyed on client IP (protects the CPU-heavy endpoints)
+limiter = Limiter(key_func=get_remote_address)
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +81,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.state.limiter = limiter
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +174,9 @@ async def health_check():
 
 
 @app.post("/api/caption")
+@limiter.limit("10/minute")
 async def create_caption(
+    request: Request,
     file: UploadFile = File(..., description="Image file (JPG, PNG, or WEBP, max 10MB)"),
     lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
     model_choice: str = Form(default="combined", description="Model choice: 'combined', 'vit', or 'blip'"),
@@ -256,7 +269,9 @@ async def create_caption(
 
 
 @app.post("/api/detect")
+@limiter.limit("30/minute")
 async def detect_from_frame(
+    request: Request,
     frame: str = Form(..., description="Base64-encoded camera frame (JPEG/PNG)"),
     lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
     model_choice: str = Form(default="combined", description="Model choice: 'combined', 'vit', or 'blip'"),
@@ -345,7 +360,9 @@ async def detect_from_frame(
 
 
 @app.post("/api/chat")
+@limiter.limit("20/minute")
 async def chat_image(
+    request: Request,
     file: UploadFile = File(..., description="Image file (JPG, PNG, or WEBP, max 10MB)"),
     question: str = Form(..., description="User question about the image"),
     lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
