@@ -6,14 +6,21 @@ Loads two models:
   2. Salesforce BLIP — for image captioning and Visual Question Answering
 
 This replaces the old multi_caption_model.py which loaded 3 separate models.
+
+The "capable" comparison model (Florence-2) is loaded separately via
+capable_model.py and orchestrated by analyze_comparison() — both pipelines run
+concurrently so total latency tracks the slowest model, not the sum.
 """
 
 import os
 import sys
+import asyncio
 import time
 import torch
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
+
+import capable_model
 
 # Add the vision_transformer_scratch directory to path
 _VIT_DIR = os.path.join(
@@ -250,6 +257,51 @@ def describe_scene(image: Image.Image, model_choice: str = "combined") -> dict:
         "description": description,
         "model_choice": model_choice,
     }
+
+
+# =============================================================================
+# Hybrid Comparison Pipeline (Ours vs Capable)
+# =============================================================================
+
+def _capable_summary(image: Image.Image) -> dict:
+    """Run the capable model (Florence-2) caption + detection.
+
+    Runs inside a worker thread; inference ops release the GIL so PyTorch
+    work from both pipelines genuinely overlaps across CPU cores.
+    """
+    try:
+        if not capable_model.get_status()["available"]:
+            return {"available": False, "caption": "", "detections": [], "error": "Capable model not loaded."}
+
+        caption = capable_model.generate_caption(image)
+        detections = capable_model.detect_objects(image)
+        return {
+            "available": True,
+            "caption": caption,
+            "detections": detections,
+            "error": None,
+        }
+    except Exception as e:
+        return {"available": False, "caption": "", "detections": [], "error": str(e)}
+
+
+async def analyze_comparison(image: Image.Image, model_choice: str = "combined") -> dict:
+    """Analyze an image with BOTH pipelines concurrently.
+
+    - "ours":    Custom ViT classification + BLIP caption (existing pipeline)
+    - "capable": Florence-2 open-vocabulary detection + detailed caption
+
+    Returns:
+        {
+            "ours":    <describe_scene result>,
+            "capable": {"available", "caption", "detections", "error"},
+        }
+    """
+    ours_task = asyncio.to_thread(describe_scene, image, model_choice)
+    capable_task = asyncio.to_thread(_capable_summary, image)
+
+    ours, capable = await asyncio.gather(ours_task, capable_task)
+    return {"ours": ours, "capable": capable}
 
 
 # =============================================================================
