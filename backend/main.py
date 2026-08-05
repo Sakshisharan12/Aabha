@@ -16,11 +16,13 @@ Models:
 
 import asyncio
 import base64
+import logging
 import os
 import io
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
@@ -30,6 +32,12 @@ import vision_model
 import capable_model
 from tts import caption_to_audio
 from translate import translate_caption
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("aabha")
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +75,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ---------------------------------------------------------------------------
+# Global exception handler — surface 500 tracebacks instead of swallowing them
+# ---------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled error on %s %s:\n%s", request.method, request.url.path, traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}"},
+    )
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -103,7 +123,7 @@ async def _build_audio_payload(text: str, lang: str) -> dict:
             translated = translate_caption(text, target_lang=lang)
         except RuntimeError as e:
             translated = None
-            print(f"Translation warning: {e}")
+            logger.warning("Translation failed, falling back to English: %s", e)
 
     final_text = translated if translated else text
     tts_lang = lang if (lang in ["hi", "mr"] and translated) else "en"
@@ -380,7 +400,7 @@ async def chat_image(
             answer_translated = translate_caption(answer_en, target_lang=lang)
         except RuntimeError as e:
             answer_translated = None
-            print(f"Translation warning: {e}")
+            logger.warning("Translation failed, falling back to English: %s", e)
 
     # --- Determine the final answer for TTS ---
     final_answer = answer_translated if answer_translated else answer_en
