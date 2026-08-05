@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Download, AlertCircle, Volume2, Camera, Upload, Eye, RefreshCw } from 'lucide-react';
+import { Download, AlertCircle, Volume2, Camera, Upload, Eye, RefreshCw, Sparkles, Boxes } from 'lucide-react';
 
 /* ============================================
    Inline SVG Components — Accessibility Themed
@@ -63,6 +63,78 @@ const AudioWaveformSvg = () => (
   </svg>
 );
 
+// Detection overlay canvas — draws the uploaded image (contain-fit) plus
+// bounding boxes reported by the capable model, scaled to the rendered size.
+const DetectionOverlayCanvas = ({ src, detections = [] }) => {
+  const canvasRef = useRef(null);
+  const wrapRef = useRef(null);
+  const [img, setImg] = useState(null);
+
+  useEffect(() => {
+    if (!src) return;
+    const image = new window.Image();
+    image.onload = () => setImg(image);
+    image.src = src;
+  }, [src]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap || !img) return;
+
+    const draw = () => {
+      const { width: cw, height: ch } = wrap.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = cw * dpr;
+      canvas.height = ch * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+
+      // Contain-fit math: scale image to fit within (cw, ch)
+      const scale = Math.min(cw / img.naturalWidth, ch / img.naturalHeight);
+      const dw = img.naturalWidth * scale;
+      const dh = img.naturalHeight * scale;
+      const dx = (cw - dw) / 2;
+      const dy = (ch - dh) / 2;
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.drawImage(img, dx, dy, dw, dh);
+
+      // Draw bounding boxes in pixel coords returned by the backend
+      detections.forEach((det) => {
+        const [x1, y1, x2, y2] = det.box || [];
+        if (x1 == null || x2 == null) return;
+        const rx = dx + x1 * scale;
+        const ry = dy + y1 * scale;
+        const rw = (x2 - x1) * scale;
+        const rh = (y2 - y1) * scale;
+
+        ctx.strokeStyle = '#E8734A';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rx, ry, rw, rh);
+
+        ctx.fillStyle = 'rgba(232, 115, 74, 0.9)';
+        ctx.font = '600 12px Inter, sans-serif';
+        const label = det.label || 'object';
+        const tw = ctx.measureText(label).width + 8;
+        const ty = ry > 20 ? ry - 18 : ry;
+        ctx.fillRect(rx, ty, tw, 18);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(label, rx + 4, ty + 13);
+      });
+    };
+
+    draw();
+    window.addEventListener('resize', draw);
+    return () => window.removeEventListener('resize', draw);
+  }, [img, detections]);
+
+  return (
+    <div ref={wrapRef} className="detection-canvas-wrap" style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <canvas ref={canvasRef} className="detection-canvas" aria-label="Image preview with detected object bounding boxes" style={{ width: '100%', height: '100%', display: 'block' }} />
+    </div>
+  );
+};
+
 /* ============================================
    Main Page Component
    ============================================ */
@@ -99,6 +171,7 @@ export default function Home() {
   // Refs for camera stability & avoiding closure staleness
   const fileInputRef = useRef(null);
   const audioPlayerRef = useRef(null);
+  const capableAudioRef = useRef(null);
   const resultsRef = useRef(null);
   const captionRef = useRef(null);
   const chatAudioPlayerRef = useRef(null);
@@ -497,11 +570,12 @@ export default function Home() {
       const data = await response.json();
       setCameraDetection(data);
 
-      // Auto-speak if enabled and description changed
-      if (autoSpeakRef.current && data.description && data.description !== lastSpokenRef.current) {
-        lastSpokenRef.current = data.description;
-        const audioSrc = `data:audio/mp3;base64,${data.audio_base64}`;
-        if (cameraAudioRef.current) {
+      // Auto-speak if enabled and ours description changed
+      const oursDesc = data.ours?.translated || data.ours?.description || '';
+      if (autoSpeakRef.current && oursDesc && oursDesc !== lastSpokenRef.current) {
+        lastSpokenRef.current = oursDesc;
+        const audioSrc = `data:audio/mp3;base64,${data.ours?.audio_base64 || ''}`;
+        if (cameraAudioRef.current && data.ours?.audio_base64) {
           cameraAudioRef.current.src = audioSrc;
           cameraAudioRef.current.playbackRate = playbackSpeed;
           cameraAudioRef.current.play().catch(() => {});
@@ -605,7 +679,8 @@ export default function Home() {
     };
   }, [detectionInterval, cameraActive, startDetectionLoop]);
 
-  const audioSrc = results ? `data:audio/mp3;base64,${results.audio_base64}` : '';
+  const audioSrc = results?.ours?.audio_base64 ? `data:audio/mp3;base64,${results.ours.audio_base64}` : '';
+  const capableAudioSrc = results?.capable?.audio_base64 ? `data:audio/mp3;base64,${results.capable.audio_base64}` : '';
 
   return (
     <>
@@ -799,128 +874,206 @@ export default function Home() {
               </div>
             )}
 
-            {/* Results */}
+            {/* Results — OURS vs CAPABLE comparison */}
             {results && (
               <section id="results-section" ref={resultsRef} className="card results-fade-in" aria-labelledby="results-heading">
                 <h2 id="results-heading" className="section-title" style={{ display: 'flex', alignItems: 'center', marginBottom: '1.5rem' }}>
                   <AudioWaveformSvg />
-                  Narration Results
+                  Model Comparison — Ours vs Capable
                 </h2>
-                
+
                 <div className="results-grid">
-                  {/* Image Preview */}
+                  {/* Image Preview with capable-model bounding boxes */}
                   <div className="preview-panel">
                     <h3 className="panel-subtitle">Uploaded Image</h3>
                     <div className="image-preview-container">
                       {imagePreviewUrl && (
-                        <img 
-                          id="image-preview" src={imagePreviewUrl} 
-                          alt={`Uploaded image. AI generated caption: ${results.caption_en}`} 
-                          className="image-preview" 
+                        <DetectionOverlayCanvas
+                          src={imagePreviewUrl}
+                          detections={results.capable?.detections || []}
                         />
                       )}
                     </div>
+                    {results.capable?.available && results.capable?.detections?.length > 0 && (
+                      <p className="box-detect-note">
+                        <Boxes size={14} aria-hidden="true" /> Boxes drawn by Capable (Florence-2). Yours reports a single class.
+                      </p>
+                    )}
                   </div>
 
-                  {/* Captions & Audio */}
+                  {/* Comparison panels */}
                   <div className="output-panel">
-                    {/* Classification Result */}
-                    {results.classification && modelChoice !== 'blip' && (
-                      <div className="classification-result">
-                        <div className="classification-icon">
-                          <Eye size={20} />
+                    {/* ===== OURS Panel ===== */}
+                    <div className="compare-panel compare-panel-ours">
+                      <div className="compare-panel-header">
+                        <div className="compare-panel-title">
+                          <Eye size={18} aria-hidden="true" />
+                          <h3 className="panel-subtitle" style={{ margin: 0 }}>Ours · Custom ViT + BLIP</h3>
                         </div>
-                        <div className="classification-details">
-                          <div className="classification-label">Custom ViT Detection</div>
-                          {results.classification.available ? (
-                            <>
-                              <div className="classification-name">{results.classification.class_name}</div>
-                              <div className="classification-confidence">
-                                {(results.classification.confidence * 100).toFixed(1)}% confidence
-                              </div>
-                            </>
-                          ) : (
-                            <div className="classification-unavailable">
-                              ViT model not trained yet — run train.py to enable
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="caption-container">
-                      <h3 className="panel-subtitle">Generated Description</h3>
-                      
-                      <div className="caption-block english-caption">
-                        <div className="caption-header">
-                          <span className="lang-tag">English</span>
-                        </div>
-                        <p 
-                          id="text-caption-en" className="caption-text" tabIndex={0} 
-                          ref={language === 'en' ? captionRef : null} aria-label="English caption"
-                        >
-                          {results.description || results.caption_en}
-                        </p>
+                        <span className="compare-badge">fixed 10-class</span>
                       </div>
 
-                      {results.caption_translated && (
-                        <div id="caption-translated-block" className={`caption-block ${language === 'mr' ? 'marathi-caption' : 'hindi-caption'}`}>
-                          <div className="caption-header">
-                            <span className="lang-tag">{language === 'mr' ? 'Marathi / मराठी' : 'Hindi / हिंदी'}</span>
+                      {modelChoice !== 'blip' && results.ours?.classification && (
+                        <div className="classification-result">
+                          <div className="classification-icon">
+                            <Eye size={20} />
                           </div>
-                          <p 
-                            id="text-caption-translated" className="caption-text" tabIndex={0} 
-                            ref={language === 'hi' || language === 'mr' ? captionRef : null} 
-                            aria-label={language === 'mr' ? "Marathi translation" : "Hindi translation"}
-                          >
-                            {results.caption_translated}
-                          </p>
+                          <div className="classification-details">
+                            <div className="classification-label">Custom ViT Detection</div>
+                            {results.ours.classification.available ? (
+                              <>
+                                <div className="classification-name">{results.ours.classification.class_name}</div>
+                                <div className="classification-confidence">
+                                  {(results.ours.classification.confidence * 100).toFixed(1)}% confidence
+                                </div>
+                              </>
+                            ) : (
+                              <div className="classification-unavailable">
+                                ViT model not trained yet — run train.py to enable
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
+
+                      <div className="caption-container">
+                        {results.ours?.caption_en && results.ours?.description !== results.ours?.caption_en && (
+                          <div className="caption-block">
+                            <div className="caption-header">
+                              <span className="lang-tag">Scene caption</span>
+                            </div>
+                            <p className="caption-text" tabIndex={0} aria-label="Scene caption">
+                              {results.ours.caption_en}
+                            </p>
+                          </div>
+                        )}
+                        <div className="caption-block">
+                          <div className="caption-header">
+                            <span className="lang-tag">Narration {results.ours?.translated ? '(answer translated)' : '(English)'}</span>
+                          </div>
+                          <p
+                            id="text-ours" className="caption-text" tabIndex={0}
+                            ref={captionRef} aria-label="Narration text"
+                          >
+                            {results.ours?.translated || results.ours?.description}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="audio-container">
+                        <h3 className="panel-subtitle">Audio Narration</h3>
+                        <div className="audio-wrapper">
+                          <audio
+                            id="audio-player" className="native-audio" controls src={audioSrc}
+                            ref={audioPlayerRef}
+                            onPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
+                            onCanPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
+                            aria-label={`Spoken narration: ${results.ours?.translated || results.ours?.description}`}
+                          />
+                          <div className="speed-control-container">
+                            <label htmlFor="playback-speed-select" className="sr-only">Playback Speed</label>
+                            <select
+                              id="playback-speed-select" className="speed-select"
+                              value={playbackSpeed} onChange={handleSpeedChange}
+                              aria-label="Select playback speed"
+                            >
+                              <option value="0.75">0.75×</option>
+                              <option value="1.0">1.0× Normal</option>
+                              <option value="1.25">1.25×</option>
+                              <option value="1.5">1.5×</option>
+                              <option value="2.0">2.0×</option>
+                            </select>
+                          </div>
+                          <a
+                            id="btn-download" href={audioSrc} className="btn-secondary"
+                            download={`caption_${selectedFile?.name?.split('.')[0] || 'narration'}.mp3`}
+                            aria-label="Download audio narration as MP3 file"
+                          >
+                            <Download size={18} className="btn-icon" aria-hidden="true" />
+                            Download
+                          </a>
+                        </div>
+                      </div>
                     </div>
 
-                    {/* Audio Player */}
-                    <div className="audio-container">
-                      <h3 className="panel-subtitle">Audio Narration</h3>
-                      <div className="audio-wrapper">
-                        <audio 
-                          id="audio-player" className="native-audio" controls src={audioSrc}
-                          ref={audioPlayerRef}
-                          onPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
-                          onCanPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
-                          aria-label={`Spoken narration: ${results.caption_translated || results.description || results.caption_en}`}
-                        />
-                        
-                        <div className="speed-control-container">
-                          <label htmlFor="playback-speed-select" className="sr-only">Playback Speed</label>
-                          <select 
-                            id="playback-speed-select" className="speed-select" 
-                            value={playbackSpeed} onChange={handleSpeedChange}
-                            aria-label="Select playback speed"
-                          >
-                            <option value="0.75">0.75×</option>
-                            <option value="1.0">1.0× Normal</option>
-                            <option value="1.25">1.25×</option>
-                            <option value="1.5">1.5×</option>
-                            <option value="2.0">2.0×</option>
-                          </select>
+                    {/* ===== CAPABLE Panel ===== */}
+                    <div className={`compare-panel compare-panel-capable ${results.capable?.available ? '' : 'is-muted'}`}>
+                      <div className="compare-panel-header">
+                        <div className="compare-panel-title">
+                          <Sparkles size={18} aria-hidden="true" />
+                          <h3 className="panel-subtitle" style={{ margin: 0 }}>Capable · Florence-2</h3>
                         </div>
-                        
-                        <a 
-                          id="btn-download" href={audioSrc} className="btn-secondary"
-                          download={`caption_${selectedFile?.name?.split('.')[0] || 'narration'}.mp3`} 
-                          aria-label="Download audio narration as MP3 file"
-                        >
-                          <Download size={18} className="btn-icon" aria-hidden="true" />
-                          Download
-                        </a>
+                        <span className="compare-badge">open-vocabulary</span>
                       </div>
+
+                      {results.capable?.available ? (
+                        <>
+                          {results.capable.detections?.length > 0 && (
+                            <div className="detection-chips">
+                              <span className="detection-chips-title">Detected objects</span>
+                              <div className="chip-list">
+                                {results.capable.detections.map((d, i) => (
+                                  <span key={i} className="detection-chip">{d.label}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="caption-block">
+                            <div className="caption-header">
+                              <span className="lang-tag">Detailed caption</span>
+                            </div>
+                            <p className="caption-text" tabIndex={0} aria-label="Florence-2 detailed caption">
+                              {results.capable.caption || 'No caption generated.'}
+                            </p>
+                          </div>
+
+                          {results.capable?.translated && (
+                            <div className="caption-block">
+                              <div className="caption-header">
+                                <span className="lang-tag">Translated</span>
+                              </div>
+                              <p className="caption-text" tabIndex={0} aria-label="Translated capable caption">
+                                {results.capable.translated}
+                              </p>
+                            </div>
+                          )}
+
+                          {capableAudioSrc && (
+                            <div className="audio-container">
+                              <h3 className="panel-subtitle">Audio Narration</h3>
+                              <div className="audio-wrapper">
+                                <audio
+                                  className="native-audio" controls src={capableAudioSrc}
+                                  ref={capableAudioRef}
+                                  onPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
+                                  onCanPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
+                                  aria-label={`Spoken capable narration: ${results.capable.translated || results.capable.caption}`}
+                                />
+                                <a
+                                  href={capableAudioSrc} className="btn-secondary"
+                                  download={`capable_${selectedFile?.name?.split('.')[0] || 'narration'}.mp3`}
+                                  aria-label="Download capable audio narration as MP3 file"
+                                >
+                                  <Download size={18} className="btn-icon" aria-hidden="true" />
+                                  Download
+                                </a>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="classification-unavailable">
+                          Capable model not loaded — backend will run in ours-only mode.
+                          {results.capable?.error && <div className="caption-text" style={{ marginTop: '0.5rem' }}>{results.capable.error}</div>}
+                        </div>
+                      )}
                     </div>
 
                     {/* VQA Chat */}
                     <div className="chat-interface-card">
                       <h3 className="panel-subtitle">Ask about this image / सवाल पूछें</h3>
-                      
+
                       <div className="chat-messages-box" aria-live="polite">
                         {chatHistory.length === 0 ? (
                           <p className="chat-placeholder">Ask anything — e.g., &quot;What color is the car?&quot; or &quot;How many people?&quot;</p>
@@ -932,7 +1085,7 @@ export default function Home() {
                                 <p className="message-text">{msg.text}</p>
                               </div>
                               {msg.audioSrc && (
-                                <button 
+                                <button
                                   type="button" className="chat-audio-btn" aria-label="Replay audio answer"
                                   onClick={() => {
                                     setChatAudioSrc(msg.audioSrc);
@@ -952,23 +1105,23 @@ export default function Home() {
                         )}
                         <div ref={chatBottomRef} />
                       </div>
-                      
+
                       <form onSubmit={handleChatSubmit} className="chat-input-form">
-                        <input 
+                        <input
                           type="text" id="chat-question-input" ref={chatInputRef}
                           className="chat-text-input" value={chatQuestion}
                           onChange={(e) => setChatQuestion(e.target.value)}
                           placeholder="Ask a question about the image..."
                           disabled={chatLoading} aria-label="Type your question about the image"
                         />
-                        <button 
-                          type="submit" className="btn-chat-submit" 
+                        <button
+                          type="submit" className="btn-chat-submit"
                           disabled={!chatQuestion.trim() || chatLoading}
                         >
                           {chatLoading ? 'Thinking...' : 'Ask'}
                         </button>
                       </form>
-                      
+
                       <audio ref={chatAudioPlayerRef} src={chatAudioSrc} style={{ display: 'none' }} />
                     </div>
                   </div>
@@ -1008,18 +1161,28 @@ export default function Home() {
                           <Eye size={16} />
                         </div>
                         <div className="detection-overlay-text">
-                          {cameraDetection.classification?.available && cameraDetection.classification.class_name ? (
+                          {cameraDetection.ours?.classification?.available && cameraDetection.ours.classification.class_name ? (
                             <>
                               <div className="detection-overlay-class">
-                                {cameraDetection.classification.class_name}
+                                {cameraDetection.ours.classification.class_name}
                                 <span style={{ opacity: 0.7, fontSize: '0.8em', marginLeft: '0.5rem' }}>
-                                  {(cameraDetection.classification.confidence * 100).toFixed(0)}%
+                                  {(cameraDetection.ours.classification.confidence * 100).toFixed(0)}%
                                 </span>
                               </div>
-                              <div className="detection-overlay-caption">{cameraDetection.description}</div>
+                              <div className="detection-overlay-caption">
+                                {cameraDetection.ours?.translated || cameraDetection.ours?.description}
+                              </div>
                             </>
                           ) : (
-                            <div className="detection-overlay-caption">{cameraDetection.description}</div>
+                            <div className="detection-overlay-caption">
+                              {cameraDetection.ours?.translated || cameraDetection.ours?.description}
+                            </div>
+                          )}
+                          {cameraDetection.capable?.available && cameraDetection.capable?.detections?.length > 0 && (
+                            <div className="detection-overlay-capable">
+                              <Sparkles size={12} aria-hidden="true" />
+                              {cameraDetection.capable.detections.slice(0, 4).map((d) => d.label).join(' · ')}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1127,37 +1290,81 @@ export default function Home() {
               {/* Detection Results Panel */}
               {cameraDetection && (
                 <div className="camera-results results-fade-in">
-                  {/* Classification */}
-                  {cameraDetection.classification?.available && modelChoice !== 'blip' && (
-                    <div className="classification-result">
-                      <div className="classification-icon">
-                        <Eye size={20} />
-                      </div>
-                      <div className="classification-details">
-                        <div className="classification-label">Custom ViT Detection</div>
-                        <div className="classification-name">{cameraDetection.classification.class_name}</div>
-                        <div className="classification-confidence">
-                          {(cameraDetection.classification.confidence * 100).toFixed(1)}% confidence
-                          {cameraDetection.classification.top3 && cameraDetection.classification.top3.length > 1 && (
-                            <span style={{ marginLeft: '0.75rem', opacity: 0.7 }}>
-                              Also: {cameraDetection.classification.top3.slice(1).map(p => 
-                                `${p.class_name} ${(p.confidence * 100).toFixed(0)}%`
-                              ).join(', ')}
-                            </span>
-                          )}
+                  <div className="camera-compare-grid">
+                    {/* OURS */}
+                    <div className="compare-panel compare-panel-ours">
+                      <div className="compare-panel-header">
+                        <div className="compare-panel-title">
+                          <Eye size={16} aria-hidden="true" />
+                          <span className="compare-panel-name">Ours · ViT + BLIP</span>
                         </div>
                       </div>
+                      {cameraDetection.ours?.classification?.available && modelChoice !== 'blip' && (
+                        <div className="classification-result">
+                          <div className="classification-icon">
+                            <Eye size={20} />
+                          </div>
+                          <div className="classification-details">
+                            <div className="classification-label">Custom ViT Detection</div>
+                            <div className="classification-name">{cameraDetection.ours.classification.class_name}</div>
+                            <div className="classification-confidence">
+                              {(cameraDetection.ours.classification.confidence * 100).toFixed(1)}% confidence
+                              {cameraDetection.ours.classification.top3 && cameraDetection.ours.classification.top3.length > 1 && (
+                                <span style={{ marginLeft: '0.75rem', opacity: 0.7 }}>
+                                  Also: {cameraDetection.ours.classification.top3.slice(1).map(p =>
+                                    `${p.class_name} ${(p.confidence * 100).toFixed(0)}%`
+                                  ).join(', ')}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      <div className="caption-block">
+                        <div className="caption-header">
+                          <span className="lang-tag">Narration</span>
+                        </div>
+                        <p className="caption-text" tabIndex={0} aria-label="Ours narration">
+                          {cameraDetection.ours?.translated || cameraDetection.ours?.description}
+                        </p>
+                      </div>
                     </div>
-                  )}
 
-                  {/* Scene Description */}
-                  <div className="caption-block">
-                    <div className="caption-header">
-                      <span className="lang-tag">Scene Description</span>
+                    {/* CAPABLE */}
+                    <div className={`compare-panel compare-panel-capable ${cameraDetection.capable?.available ? '' : 'is-muted'}`}>
+                      <div className="compare-panel-header">
+                        <div className="compare-panel-title">
+                          <Sparkles size={16} aria-hidden="true" />
+                          <span className="compare-panel-name">Capable · Florence-2</span>
+                        </div>
+                      </div>
+                      {cameraDetection.capable?.available ? (
+                        <>
+                          {cameraDetection.capable.detections?.length > 0 && (
+                            <div className="detection-chips">
+                              <span className="detection-chips-title">Detected objects</span>
+                              <div className="chip-list">
+                                {cameraDetection.capable.detections.slice(0, 8).map((d, i) => (
+                                  <span key={i} className="detection-chip">{d.label}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="caption-block">
+                            <div className="caption-header">
+                              <span className="lang-tag">Detailed caption</span>
+                            </div>
+                            <p className="caption-text" tabIndex={0} aria-label="Capable detailed caption">
+                              {cameraDetection.capable.caption || 'No caption generated.'}
+                            </p>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="classification-unavailable">
+                          Capable model not loaded — ours-only mode.
+                        </div>
+                      )}
                     </div>
-                    <p className="caption-text" tabIndex={0} aria-label="Scene description">
-                      {cameraDetection.description}
-                    </p>
                   </div>
                 </div>
               )}
