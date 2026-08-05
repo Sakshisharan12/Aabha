@@ -164,6 +164,35 @@ python vit.py
 | `POST` | `/api/detect` | Camera frame (base64) → `{ours, capable}` comparison + audio |
 | `POST` | `/api/chat` | Image + question → VQA answer + audio |
 
+### Example comparison response (`POST /api/caption`)
+
+```json
+{
+  "ours": {
+    "caption_en": "a cat sitting on a sofa",
+    "description": "This might be a cat. a cat sitting on a sofa.",
+    "classification": { "class_name": "cat", "confidence": 0.82, "available": true },
+    "model_choice": "combined",
+    "text_for_tts": "a cat sitting on a sofa",
+    "translated": null,
+    "lang": "en",
+    "audio_base64": "<base64 mp3>",
+    "audio_format": "mp3"
+  },
+  "capable": {
+    "available": true,
+    "caption": "A gray cat resting on a cream sofa in a bright living room.",
+    "detections": [{ "label": "cat", "score": null, "box": [214, 96, 621, 470] }],
+    "error": null,
+    "text_for_tts": "A gray cat resting on a cream sofa in a bright living room.",
+    "translated": null,
+    "lang": "en",
+    "audio_base64": "<base64 mp3>",
+    "audio_format": "mp3"
+  }
+}
+```
+
 ---
 
 ## ⚠️ Known Limitations
