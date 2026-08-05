@@ -122,6 +122,32 @@ def generate_caption(image: Image.Image) -> str:
     return str(parsed_text).replace(_ENDING, "").strip()
 
 
+def _normalize_detections(result, max_objects: int = 20) -> list:
+    """Normalize the OD parse into a uniform list of {label, score, box}.
+
+    Newer transformers returns {"bboxes": [...], "labels": [...]}, while
+    older versions return a list of {"label", "bbox"} dicts.
+    """
+    out = []
+    if isinstance(result, dict):
+        labels = result.get("labels", [])
+        boxes = result.get("bboxes", [])
+        for label, bbox in zip(labels, boxes):
+            out.append({
+                "label": label,
+                "score": None,
+                "box": [int(v) for v in bbox],
+            })
+    else:
+        for det in result:
+            out.append({
+                "label": det.get("label", "object"),
+                "score": None,
+                "box": [int(v) for v in det.get("bbox", [0, 0, 0, 0])],
+            })
+    return out[:max_objects]
+
+
 def detect_objects(image: Image.Image, max_objects: int = 20) -> list:
     """Run open-vocabulary object detection.
 
@@ -157,27 +183,8 @@ def detect_objects(image: Image.Image, max_objects: int = 20) -> list:
     )
 
     # Normalize the OD parse into a uniform list of {label, score, box}.
-    # Newer transformers returns {"bboxes": [...], "labels": [...]}, while
-    # older versions return a list of {"label", "bbox"} dicts.
     result = parsed.get("<OD>") or []
-    out = []
-    if isinstance(result, dict):
-        labels = result.get("labels", [])
-        boxes = result.get("bboxes", [])
-        for label, bbox in zip(labels, boxes):
-            out.append({
-                "label": label,
-                "score": None,
-                "box": [int(v) for v in bbox],
-            })
-    else:
-        for det in result:
-            out.append({
-                "label": det.get("label", "object"),
-                "score": None,
-                "box": [int(v) for v in det.get("bbox", [0, 0, 0, 0])],
-            })
-    return out[:max_objects]
+    return _normalize_detections(result, max_objects)
 
 
 def get_status() -> dict:
