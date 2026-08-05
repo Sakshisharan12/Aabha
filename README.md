@@ -78,6 +78,7 @@ Aabha/
 │       └── vit_cifar10_best.pth
 ├── backend/
 │   ├── vision_model.py             # Unified model loader (BLIP + custom ViT)
+│   ├── capable_model.py            # Florence-2 loader (open-vocab detection + caption)
 │   ├── main.py                     # FastAPI server & endpoints
 │   ├── requirements.txt            # Python dependencies
 │   ├── translate.py                # Google Translate API abstraction
@@ -86,10 +87,11 @@ Aabha/
 │   ├── src/
 │   │   └── app/
 │   │       ├── layout.js           # Next.js app wrapper & fonts
-│   │       ├── page.js             # React UI (Upload + Live Camera)
+│   │       ├── page.js             # React UI (Upload + Live Camera + Comparison)
 │   │       └── globals.css         # Accessibility theme styles
 │   ├── package.json
 │   └── next.config.mjs
+├── .github/workflows/ci.yml        # CI: backend import + frontend lint/build
 ├── Dockerfile
 └── README.md
 ```
@@ -166,7 +168,8 @@ python vit.py
 
 ## ⚠️ Known Limitations
 
-- **CIFAR-10 Classes Only**: The custom ViT recognizes 10 object categories (airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck). BLIP provides broader scene descriptions.
+- **CIFAR-10 Classes Only**: The custom ViT ("ours") recognizes only 10 object categories (airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck). This is the point of the comparison — the capable Florence-2 model detects open-vocabulary objects.
+- **CPU Inference**: Florence-2 runs without a KV-cache for compatibility (`use_cache=False`), so it is slower than a CUDA deployment. Expect a few seconds per image on CPU.
 - **CPU Training**: Training is designed for CPU. GPU will be faster but is not required.
 - **Text-Heavy Images**: BLIP does not perform OCR on documents.
-- **Hallucinations**: Like all vision-language models, BLIP may occasionally misidentify objects in complex scenes.
+- **Hallucinations**: Like all vision-language models, BLIP/Florence-2 may occasionally misidentify objects in complex scenes.
