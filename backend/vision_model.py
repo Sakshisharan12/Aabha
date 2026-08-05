@@ -43,6 +43,9 @@ _blip_model = None
 _vit_model = None
 _vit_available = False
 
+# BLIP load status
+_blip_available = False
+
 # CIFAR-10 class names
 CIFAR10_CLASSES = [
     "airplane", "automobile", "bird", "cat", "deer",
@@ -58,6 +61,7 @@ def load_models():
     global _models_loaded
     global _blip_processor, _blip_model
     global _vit_model, _vit_available
+    global _blip_available
 
     if _models_loaded:
         print("Models already loaded in cache.")
@@ -76,6 +80,7 @@ def load_models():
         use_safetensors=True,
     ).to(DEVICE)
     _blip_model.eval()
+    _blip_available = True
     print("  BLIP loaded successfully.")
 
     # ── Load Custom ViT (classification) ──
@@ -256,6 +261,15 @@ def describe_scene(image: Image.Image, model_choice: str = "combined") -> dict:
         "classification": classification,
         "description": description,
         "model_choice": model_choice,
+    }
+
+
+def get_status() -> dict:
+    """Report availability of the OURS pipeline (BLIP + custom ViT)."""
+    return {
+        "blip": _blip_available,
+        "custom_vit": _vit_available,
+        "device": DEVICE,
     }
 
 

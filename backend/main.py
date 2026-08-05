@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 
 from vision_model import load_models, generate_answer, analyze_comparison
+import vision_model
 import capable_model
 from tts import caption_to_audio
 from translate import translate_caption
@@ -106,11 +107,7 @@ async def _build_audio_payload(text: str, lang: str) -> dict:
 async def models_status():
     """Report which models are loaded and ready."""
     return {
-        "ours": {
-            "blip": "Salesforce/blip-image-captioning-base",
-            "custom_vit": "ViT-Tiny (CIFAR-10, trained from scratch)",
-            "vit_available": True,
-        },
+        "ours": vision_model.get_status(),
         "capable": capable_model.get_status(),
     }
 
