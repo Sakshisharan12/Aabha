@@ -23,6 +23,9 @@ jobs:
       - name: Syntax + import check (no model download)
         working-directory: backend
         run: python -m py_compile main.py vision_model.py capable_model.py tts.py translate.py && python -c "import main; print('app import OK')"
+      - name: Run backend unit tests (no model download)
+        working-directory: backend
+        run: python -m pytest tests/ -q -k "not TestClient"
 
   frontend:
     name: Frontend (lint + build)
