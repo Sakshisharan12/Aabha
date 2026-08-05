@@ -1,4 +1,4 @@
-# Backend dependencies for AI Caption Generator
+# Backend dependencies for Aabha - Accessible AI Vision Assistant
 # ================================================
 #
 # PyTorch CPU-only install:
@@ -17,8 +17,9 @@ transformers>=4.36.0
 Pillow>=10.0.0
 
 # For CPU-only PyTorch, install separately:
-# pip install torch --index-url https://download.pytorch.org/whl/cpu
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 torch
+torchvision
 
 # Text-to-Speech
 edge-tts>=6.1.10
