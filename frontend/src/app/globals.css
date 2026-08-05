@@ -31,6 +31,8 @@
     --color-error-border: #FECACA;
 
     --color-success: #059669;
+    --color-success-bg: rgba(5, 150, 105, 0.06);
+    --color-success-border: rgba(5, 150, 105, 0.2);
 
     --font-heading: 'Outfit', sans-serif;
     --font-body: 'DM Sans', 'Inter', sans-serif;
@@ -157,6 +159,51 @@ body {
     max-width: 540px;
     margin: 0 auto;
     line-height: 1.7;
+}
+
+/* ============================================
+   Mode Tabs (Upload / Camera)
+   ============================================ */
+.mode-tabs {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    margin-top: 1.25rem;
+}
+
+.mode-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.6rem 1.35rem;
+    background: var(--bg-card);
+    border: 2px solid var(--border-light);
+    border-radius: var(--radius-xl);
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+    outline: none;
+}
+
+.mode-tab:hover {
+    border-color: var(--color-primary-border);
+    color: var(--color-primary);
+    background: var(--color-primary-bg);
+}
+
+.mode-tab.active {
+    border-color: var(--color-primary);
+    color: var(--color-text-on-primary);
+    background: var(--color-primary);
+    box-shadow: 0 4px 12px rgba(108, 60, 225, 0.3);
+}
+
+.mode-tab:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
 }
 
 /* ============================================
@@ -615,6 +662,65 @@ body {
 }
 
 /* ============================================
+   Classification Result Badge
+   ============================================ */
+.classification-result {
+    background: var(--color-success-bg);
+    border: 1px solid var(--color-success-border);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+}
+
+.classification-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--color-success);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    flex-shrink: 0;
+}
+
+.classification-details {
+    flex: 1;
+}
+
+.classification-label {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-success);
+    margin-bottom: 0.15rem;
+}
+
+.classification-name {
+    font-family: var(--font-heading);
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--color-text);
+    text-transform: capitalize;
+}
+
+.classification-confidence {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    font-weight: 500;
+}
+
+.classification-unavailable {
+    color: var(--color-text-muted);
+    font-style: italic;
+    font-size: 0.85rem;
+}
+
+/* ============================================
    Audio Player & Speed Controls
    ============================================ */
 .audio-container {
@@ -712,6 +818,262 @@ body {
 .btn-icon {
     width: 18px;
     height: 18px;
+}
+
+/* ============================================
+   Live Camera Section
+   ============================================ */
+.camera-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.camera-feed-container {
+    position: relative;
+    background: #0a0a1a;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    aspect-ratio: 4/3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.camera-feed {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-md);
+}
+
+.camera-feed.mirror {
+    transform: scaleX(-1);
+}
+
+.camera-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    color: var(--color-text-muted);
+    padding: 2rem;
+    text-align: center;
+}
+
+.camera-placeholder-icon {
+    width: 64px;
+    height: 64px;
+    color: var(--color-text-muted);
+    opacity: 0.4;
+}
+
+.camera-placeholder p {
+    font-size: 0.95rem;
+    max-width: 300px;
+}
+
+/* Detection overlay badge on camera feed */
+.detection-overlay {
+    position: absolute;
+    bottom: 1rem;
+    left: 1rem;
+    right: 1rem;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(12px);
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1rem;
+    color: white;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    animation: fadeSlideUp 0.3s ease;
+}
+
+@keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.detection-overlay-icon {
+    width: 32px;
+    height: 32px;
+    background: var(--color-success);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.detection-overlay-text {
+    flex: 1;
+}
+
+.detection-overlay-class {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 700;
+    text-transform: capitalize;
+}
+
+.detection-overlay-caption {
+    font-size: 0.8rem;
+    opacity: 0.8;
+    margin-top: 0.15rem;
+}
+
+/* Camera controls bar */
+.camera-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.btn-camera {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: var(--transition);
+    outline: none;
+}
+
+.btn-camera-start {
+    background: var(--color-success);
+    color: white;
+    box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3);
+}
+
+.btn-camera-start:hover {
+    background: #047857;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(5, 150, 105, 0.4);
+}
+
+.btn-camera-stop {
+    background: var(--color-error);
+    color: white;
+    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+}
+
+.btn-camera-stop:hover {
+    background: #b91c1c;
+    transform: translateY(-1px);
+}
+
+.btn-camera:focus-visible {
+    outline: 3px solid currentColor;
+    outline-offset: 2px;
+}
+
+/* Auto-speak toggle */
+.auto-speak-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-switch {
+    position: relative;
+    width: 42px;
+    height: 24px;
+    background: #D1D5DB;
+    border-radius: 12px;
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    background: white;
+    border-radius: 50%;
+    transition: var(--transition);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.toggle-switch.active {
+    background: var(--color-success);
+}
+
+.toggle-switch.active::after {
+    left: 21px;
+}
+
+/* Interval selector */
+.interval-select {
+    background: var(--bg-card);
+    color: var(--color-text);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.75rem;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    outline: none;
+    transition: var(--transition-fast);
+}
+
+.interval-select:focus-visible {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(108, 60, 225, 0.15);
+}
+
+/* Camera status indicator */
+.camera-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    margin-left: auto;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #D1D5DB;
+}
+
+.status-dot.active {
+    background: var(--color-success);
+    animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.4); }
+    50% { opacity: 0.8; box-shadow: 0 0 0 4px rgba(5, 150, 105, 0); }
+}
+
+/* Camera detection results panel */
+.camera-results {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
 }
 
 /* ============================================

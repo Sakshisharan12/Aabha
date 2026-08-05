@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Download, AlertCircle, Volume2 } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Download, AlertCircle, Volume2, Camera, Upload, Eye, RefreshCw } from 'lucide-react';
 
 /* ============================================
    Inline SVG Components — Accessibility Themed
@@ -10,51 +10,36 @@ import { Download, AlertCircle, Volume2 } from 'lucide-react';
 // Hero: Stylized eye with radiating sound waves — "seeing through sound"
 const EyeSoundWaveSvg = () => (
   <svg className="hero-svg" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    {/* Sound wave arcs */}
     <path className="sound-wave" d="M90 60c0-16.57-13.43-30-30-30" stroke="#6C3CE1" strokeWidth="2" strokeLinecap="round" fill="none" opacity="0.3"/>
     <path className="sound-wave" d="M97 60c0-20.43-16.57-37-37-37" stroke="#6C3CE1" strokeWidth="1.5" strokeLinecap="round" fill="none" opacity="0.2"/>
     <path className="sound-wave" d="M104 60c0-24.3-19.7-44-44-44" stroke="#6C3CE1" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.15"/>
-    {/* Mirror waves */}
     <path className="sound-wave" d="M30 60c0 16.57 13.43 30 30 30" stroke="#E8734A" strokeWidth="2" strokeLinecap="round" fill="none" opacity="0.3"/>
     <path className="sound-wave" d="M23 60c0 20.43 16.57 37 37 37" stroke="#E8734A" strokeWidth="1.5" strokeLinecap="round" fill="none" opacity="0.2"/>
     <path className="sound-wave" d="M16 60c0 24.3 19.7 44 44 44" stroke="#E8734A" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.15"/>
-    {/* Eye shape */}
     <path d="M60 38C45 38 33 50 28 60c5 10 17 22 32 22s27-12 32-22c-5-10-17-22-32-22z" fill="#F3F0FF" stroke="#6C3CE1" strokeWidth="2.5"/>
-    {/* Iris */}
     <circle cx="60" cy="60" r="12" fill="#6C3CE1" opacity="0.9"/>
-    {/* Pupil */}
     <circle cx="60" cy="60" r="5" fill="#1A1A2E"/>
-    {/* Light reflection */}
     <circle cx="56" cy="56" r="2.5" fill="white" opacity="0.8"/>
   </svg>
 );
 
-// Upload illustration: Hand reaching toward an image frame with ripples
+// Upload illustration
 const HandImageSvg = () => (
   <svg className="upload-svg" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    {/* Image frame */}
     <rect x="20" y="16" width="40" height="32" rx="4" fill="#F3F0FF" stroke="#6C3CE1" strokeWidth="1.5"/>
-    {/* Mountain scenery inside frame */}
     <path d="M24 44l8-10 6 6 8-12 10 16H24z" fill="#E8734A" opacity="0.2"/>
     <circle cx="34" cy="26" r="3" fill="#E8734A" opacity="0.3"/>
-    {/* Touch ripples */}
     <circle cx="40" cy="60" r="6" stroke="#6C3CE1" strokeWidth="1" fill="none" opacity="0.3">
       <animate attributeName="r" values="6;12" dur="2s" repeatCount="indefinite"/>
       <animate attributeName="opacity" values="0.3;0" dur="2s" repeatCount="indefinite"/>
     </circle>
-    <circle cx="40" cy="60" r="6" stroke="#6C3CE1" strokeWidth="1" fill="none" opacity="0.3">
-      <animate attributeName="r" values="6;16" dur="2s" begin="0.5s" repeatCount="indefinite"/>
-      <animate attributeName="opacity" values="0.2;0" dur="2s" begin="0.5s" repeatCount="indefinite"/>
-    </circle>
-    {/* Fingertip */}
     <ellipse cx="40" cy="60" rx="4" ry="5" fill="#6C3CE1" opacity="0.15"/>
     <circle cx="40" cy="58" r="2.5" fill="#6C3CE1" opacity="0.4"/>
-    {/* Connecting line */}
     <line x1="40" y1="48" x2="40" y2="55" stroke="#6C3CE1" strokeWidth="1" strokeDasharray="2 2" opacity="0.3"/>
   </svg>
 );
 
-// Braille loading dots (6-dot cell pattern)
+// Braille loader
 const BrailleLoader = () => (
   <div className="braille-loader" aria-hidden="true">
     <div className="braille-dot"></div>
@@ -66,7 +51,7 @@ const BrailleLoader = () => (
   </div>
 );
 
-// Audio waveform visualization
+// Audio waveform
 const AudioWaveformSvg = () => (
   <svg width="48" height="24" viewBox="0 0 48 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '0.5rem' }}>
     {[4, 12, 20, 28, 36, 44].map((x, i) => (
@@ -78,11 +63,17 @@ const AudioWaveformSvg = () => (
   </svg>
 );
 
-
 /* ============================================
    Main Page Component
    ============================================ */
 export default function Home() {
+  // Mode: 'upload' or 'camera'
+  const [mode, setMode] = useState('upload');
+
+  // AI Model Selection: 'combined', 'vit', 'blip'
+  const [modelChoice, setModelChoice] = useState('combined');
+
+  // Upload mode state
   const [selectedFile, setSelectedFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
   const [dragActive, setDragActive] = useState(false);
@@ -91,12 +82,21 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+
+  // VQA Chat state
   const [chatHistory, setChatHistory] = useState([]);
   const [chatQuestion, setChatQuestion] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatAudioSrc, setChatAudioSrc] = useState("");
-  const [viewMode, setViewMode] = useState('simple');
 
+  // Camera mode state
+  const [cameraActive, setCameraActive] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [detectionInterval, setDetectionInterval] = useState(3000);
+  const [cameraDetection, setCameraDetection] = useState(null);
+  const [cameraLoading, setCameraLoading] = useState(false);
+
+  // Refs for camera stability & avoiding closure staleness
   const fileInputRef = useRef(null);
   const audioPlayerRef = useRef(null);
   const resultsRef = useRef(null);
@@ -104,11 +104,29 @@ export default function Home() {
   const chatAudioPlayerRef = useRef(null);
   const chatBottomRef = useRef(null);
   const chatInputRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const detectionTimerRef = useRef(null);
+  const cameraAudioRef = useRef(null);
+
+  // Mutable refs to prevent stale closure bugs in setInterval
+  const cameraLoadingRef = useRef(false);
+  const modelChoiceRef = useRef(modelChoice);
+  const languageRef = useRef(language);
+  const autoSpeakRef = useRef(autoSpeak);
+  const detectionIntervalRef = useRef(detectionInterval);
+  const lastSpokenRef = useRef("");
+
+  useEffect(() => { modelChoiceRef.current = modelChoice; }, [modelChoice]);
+  useEffect(() => { languageRef.current = language; }, [language]);
+  useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
+  useEffect(() => { detectionIntervalRef.current = detectionInterval; }, [detectionInterval]);
 
   const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
   const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-  // Web Audio API Sound Effects for Accessibility
+  // Sound Effects
   const playBeep = (type) => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -168,13 +186,25 @@ export default function Home() {
         gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
         osc.start();
         osc.stop(now + 0.35);
+      } else if (type === 'camera') {
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start();
+        osc.stop(now + 0.1);
       }
     } catch (e) {
-      console.log("AudioContext failed or blocked:", e);
+      console.log("AudioContext failed:", e);
     }
   };
 
-  // Clean up object URL to prevent memory leaks
   useEffect(() => {
     return () => {
       if (imagePreviewUrl) {
@@ -182,6 +212,12 @@ export default function Home() {
       }
     };
   }, [imagePreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -196,7 +232,14 @@ export default function Home() {
 
       if (e.key.toLowerCase() === 'u' || (e.altKey && e.key.toLowerCase() === 'u')) {
         e.preventDefault();
-        fileInputRef.current?.click();
+        setMode('upload');
+        stopCamera();
+        setTimeout(() => fileInputRef.current?.click(), 100);
+      }
+
+      if (e.key.toLowerCase() === 'c' || (e.altKey && e.key.toLowerCase() === 'c')) {
+        e.preventDefault();
+        setMode('camera');
       }
 
       if (e.key.toLowerCase() === 'r' || (e.altKey && e.key.toLowerCase() === 'r')) {
@@ -227,7 +270,9 @@ export default function Home() {
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown);
     };
-  }, [playbackSpeed, chatHistory]);
+  }, [playbackSpeed]);
+
+  // ===== Upload Mode Handlers =====
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
@@ -299,6 +344,7 @@ export default function Home() {
     const formData = new FormData();
     formData.append('file', selectedFile);
     formData.append('lang', language);
+    formData.append('model_choice', modelChoice);
 
     try {
       const response = await fetch('/api/caption', {
@@ -403,6 +449,162 @@ export default function Home() {
     }
   };
 
+  // ===== Camera Mode Handlers =====
+
+  const captureFrame = () => {
+    if (!videoRef.current || !canvasRef.current) return null;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    // Check if video metadata is ready and dimensions exist
+    if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      return null;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    return canvas.toDataURL('image/jpeg', 0.65);
+  };
+
+  const detectFromFrame = async () => {
+    if (cameraLoadingRef.current) return;
+
+    const frameData = captureFrame();
+    if (!frameData) return;
+
+    cameraLoadingRef.current = true;
+    setCameraLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('frame', frameData);
+      formData.append('lang', languageRef.current);
+      formData.append('model_choice', modelChoiceRef.current);
+
+      const response = await fetch('/api/detect', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Detection HTTP Error (${response.status})`);
+      }
+
+      const data = await response.json();
+      setCameraDetection(data);
+
+      // Auto-speak if enabled and description changed
+      if (autoSpeakRef.current && data.description && data.description !== lastSpokenRef.current) {
+        lastSpokenRef.current = data.description;
+        const audioSrc = `data:audio/mp3;base64,${data.audio_base64}`;
+        if (cameraAudioRef.current) {
+          cameraAudioRef.current.src = audioSrc;
+          cameraAudioRef.current.playbackRate = playbackSpeed;
+          cameraAudioRef.current.play().catch(() => {});
+        }
+      }
+
+      playBeep('camera');
+    } catch (err) {
+      console.error("Live detection error:", err);
+    } finally {
+      cameraLoadingRef.current = false;
+      setCameraLoading(false);
+    }
+  };
+
+  const startDetectionLoop = useCallback(() => {
+    if (detectionTimerRef.current) {
+      clearInterval(detectionTimerRef.current);
+    }
+
+    // Trigger initial detection after video stream settles
+    setTimeout(() => {
+      detectFromFrame();
+    }, 800);
+
+    detectionTimerRef.current = setInterval(() => {
+      detectFromFrame();
+    }, detectionIntervalRef.current);
+  }, []);
+
+  const startCamera = async () => {
+    setError(null);
+    setCameraDetection(null);
+    lastSpokenRef.current = "";
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+
+        videoRef.current.onloadedmetadata = () => {
+          startDetectionLoop();
+        };
+        if (videoRef.current.readyState >= 1) {
+          startDetectionLoop();
+        }
+      } else {
+        startDetectionLoop();
+      }
+
+      setCameraActive(true);
+      playBeep('camera');
+    } catch (err) {
+      console.error("Camera access error:", err);
+      if (err.name === 'NotAllowedError') {
+        setError("Camera access was denied. Please grant camera permissions in your browser settings.");
+      } else if (err.name === 'NotFoundError') {
+        setError("No camera device was found.");
+      } else {
+        setError(`Could not access camera: ${err.message}`);
+      }
+      playBeep('error');
+    }
+  };
+
+  const stopCamera = () => {
+    if (detectionTimerRef.current) {
+      clearInterval(detectionTimerRef.current);
+      detectionTimerRef.current = null;
+    }
+
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(track => track.stop());
+      cameraStreamRef.current = null;
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setCameraActive(false);
+    setCameraLoading(false);
+    cameraLoadingRef.current = false;
+  };
+
+  // Restart detection loop when interval changes
+  useEffect(() => {
+    if (cameraActive) {
+      startDetectionLoop();
+    }
+    return () => {
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+      }
+    };
+  }, [detectionInterval, cameraActive, startDetectionLoop]);
+
   const audioSrc = results ? `data:audio/mp3;base64,${results.audio_base64}` : '';
 
   return (
@@ -417,8 +619,30 @@ export default function Home() {
           <p className="brand-subtitle">
             Transforming images into spoken narratives — empowering visually impaired users to perceive the world through sound.
           </p>
+
+          {/* Mode Tabs */}
+          <div className="mode-tabs">
+            <button
+              type="button"
+              className={`mode-tab ${mode === 'upload' ? 'active' : ''}`}
+              onClick={() => { setMode('upload'); stopCamera(); }}
+              aria-label="Switch to image upload mode"
+            >
+              <Upload size={16} /> Upload Image
+            </button>
+            <button
+              type="button"
+              className={`mode-tab ${mode === 'camera' ? 'active' : ''}`}
+              onClick={() => setMode('camera')}
+              aria-label="Switch to live camera mode"
+            >
+              <Camera size={16} /> Live Camera
+            </button>
+          </div>
+
           <div className="shortcuts-hint">
             <span className="kbd">U Upload</span>
+            <span className="kbd">C Camera</span>
             <span className="kbd">R Replay</span>
             <span className="kbd">L Language</span>
             <span className="kbd">S Chat</span>
@@ -427,323 +651,519 @@ export default function Home() {
       </header>
 
       <main className="main-container">
-        {/* ===== Upload & Settings Card ===== */}
-        <section className="card" aria-labelledby="uploader-heading">
-          <h2 id="uploader-heading" className="sr-only">Image Uploader and Settings</h2>
-          
-          <div 
-            id="drop-zone" 
-            className={`upload-area ${dragActive ? 'drag-over' : ''}`}
-            tabIndex={0} 
-            role="button" 
-            aria-controls="file-input" 
-            aria-describedby="upload-instructions"
-            onKeyDown={handleKeyDown}
-            onClick={() => fileInputRef.current.click()}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-          >
-            <div className="upload-illustration">
-              <HandImageSvg />
-            </div>
-            
-            <div id="upload-instructions" className="upload-text">
-              {selectedFile ? (
-                <>Selected: <span className="highlight">{selectedFile.name}</span></>
-              ) : (
-                <><span className="highlight">Drag & drop your image here</span> or <span className="browse-link">browse files</span></>
-              )}
-            </div>
-            
-            <div className="upload-info">Supports JPEG, PNG, WEBP · Max 10MB</div>
-            
-            <input 
-              type="file" 
-              id="file-input" 
-              className="file-input" 
-              accept=".jpg,.jpeg,.png,.webp" 
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              aria-label="Upload image file"
-            />
-          </div>
 
-          {/* Language Selector */}
-          <div className="controls-panel">
-            <fieldset className="language-selector">
-              <legend className="section-title">Caption Language / भाषा निवडा</legend>
-              <div className="radio-group">
-                <label className="radio-label" htmlFor="lang-en">
-                  <input 
-                    type="radio" id="lang-en" name="language" value="en" 
-                    checked={language === 'en'} onChange={handleRadioChange}
-                  />
-                  <span className="custom-radio"></span>
-                  <span className="label-text">English</span>
-                </label>
-                <label className="radio-label" htmlFor="lang-hi">
-                  <input 
-                    type="radio" id="lang-hi" name="language" value="hi" 
-                    checked={language === 'hi'} onChange={handleRadioChange}
-                  />
-                  <span className="custom-radio"></span>
-                  <span className="label-text">Hindi / हिंदी</span>
-                </label>
-                <label className="radio-label" htmlFor="lang-mr">
-                  <input 
-                    type="radio" id="lang-mr" name="language" value="mr" 
-                    checked={language === 'mr'} onChange={handleRadioChange}
-                  />
-                  <span className="custom-radio"></span>
-                  <span className="label-text">Marathi / मराठी</span>
-                </label>
-              </div>
-            </fieldset>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div id="error-message" className="error-container" role="alert" aria-live="assertive">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <AlertCircle size={18} />
-                <span>{error}</span>
-              </div>
+        {/* Model Selection Panel (Shared between modes) */}
+        <section className="card" style={{ padding: '1.25rem 2.25rem' }}>
+          <fieldset className="language-selector">
+            <legend className="section-title">AI Vision Model / AI मॉडेल निवडा</legend>
+            <div className="radio-group">
+              <label className="radio-label" htmlFor="model-combined">
+                <input 
+                  type="radio" id="model-combined" name="modelChoice" value="combined" 
+                  checked={modelChoice === 'combined'} onChange={(e) => setModelChoice(e.target.value)}
+                />
+                <span className="custom-radio"></span>
+                <span className="label-text">Combined (Custom ViT + BLIP)</span>
+              </label>
+              <label className="radio-label" htmlFor="model-vit">
+                <input 
+                  type="radio" id="model-vit" name="modelChoice" value="vit" 
+                  checked={modelChoice === 'vit'} onChange={(e) => setModelChoice(e.target.value)}
+                />
+                <span className="custom-radio"></span>
+                <span className="label-text">Custom ViT Only (Classifier)</span>
+              </label>
+              <label className="radio-label" htmlFor="model-blip">
+                <input 
+                  type="radio" id="model-blip" name="modelChoice" value="blip" 
+                  checked={modelChoice === 'blip'} onChange={(e) => setModelChoice(e.target.value)}
+                />
+                <span className="custom-radio"></span>
+                <span className="label-text">BLIP Only (Captioner)</span>
+              </label>
             </div>
-          )}
-
-          {/* Generate Button */}
-          <div className="action-bar">
-            <button 
-              type="button" id="btn-generate" className="btn-primary" 
-              disabled={!selectedFile || loading} onClick={handleGenerate}
-              aria-describedby={!selectedFile ? "btn-generate-desc" : undefined}
-            >
-              {loading ? 'Analyzing...' : 'Generate Caption & Audio'}
-            </button>
-            {!selectedFile && (
-              <div id="btn-generate-desc" className="sr-only">Upload an image to enable this button.</div>
-            )}
-          </div>
+          </fieldset>
         </section>
 
-        {/* ===== Loading — Braille Dots ===== */}
-        {loading && (
-          <div id="loading-spinner" className="spinner-container" role="status" aria-live="polite">
-            <BrailleLoader />
-            <p id="loading-text" className="loading-message">Reading your image...</p>
-          </div>
-        )}
-
-        {/* ===== Results ===== */}
-        {results && (
-          <section id="results-section" ref={resultsRef} className="card results-fade-in" aria-labelledby="results-heading">
-            <div className="results-header-wrapper" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '1rem' }}>
-              <h2 id="results-heading" className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center' }}>
-                <AudioWaveformSvg />
-                Narration Results
-              </h2>
-              <div className="view-mode-toggle" style={{ display: 'flex', background: 'var(--bg-primary)', padding: '0.25rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
-                <button 
-                  type="button" 
-                  className={`btn-toggle ${viewMode === 'simple' ? 'active' : ''}`}
-                  onClick={() => setViewMode('simple')}
-                  style={{
-                    padding: '0.4rem 0.85rem',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    fontFamily: 'var(--font-heading)',
-                    fontWeight: 600,
-                    transition: 'var(--transition-fast)',
-                    background: viewMode === 'simple' ? 'var(--color-primary)' : 'transparent',
-                    color: viewMode === 'simple' ? 'var(--color-text-on-primary)' : 'var(--color-text-secondary)'
-                  }}
-                >
-                  Simple View
-                </button>
-                <button 
-                  type="button" 
-                  className={`btn-toggle ${viewMode === 'comparison' ? 'active' : ''}`}
-                  onClick={() => setViewMode('comparison')}
-                  style={{
-                    padding: '0.4rem 0.85rem',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    fontFamily: 'var(--font-heading)',
-                    fontWeight: 600,
-                    transition: 'var(--transition-fast)',
-                    background: viewMode === 'comparison' ? 'var(--color-primary)' : 'transparent',
-                    color: viewMode === 'comparison' ? 'var(--color-text-on-primary)' : 'var(--color-text-secondary)'
-                  }}
-                >
-                  Comparison View
-                </button>
-              </div>
-            </div>
-            
-            <div className="results-grid">
-              {/* Image Preview */}
-              <div className="preview-panel">
-                <h3 className="panel-subtitle">Uploaded Image</h3>
-                <div className="image-preview-container">
-                  {imagePreviewUrl && (
-                    <img 
-                      id="image-preview" src={imagePreviewUrl} 
-                      alt={`Uploaded image. AI generated caption: ${results.caption_en}`} 
-                      className="image-preview" 
-                    />
+        {/* ===================================================================
+            UPLOAD MODE
+            =================================================================== */}
+        {mode === 'upload' && (
+          <>
+            {/* Upload & Settings Card */}
+            <section className="card" aria-labelledby="uploader-heading">
+              <h2 id="uploader-heading" className="sr-only">Image Uploader and Settings</h2>
+              
+              <div 
+                id="drop-zone" 
+                className={`upload-area ${dragActive ? 'drag-over' : ''}`}
+                tabIndex={0} 
+                role="button" 
+                aria-controls="file-input" 
+                aria-describedby="upload-instructions"
+                onKeyDown={handleKeyDown}
+                onClick={() => fileInputRef.current.click()}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+              >
+                <div className="upload-illustration">
+                  <HandImageSvg />
+                </div>
+                
+                <div id="upload-instructions" className="upload-text">
+                  {selectedFile ? (
+                    <>Selected: <span className="highlight">{selectedFile.name}</span></>
+                  ) : (
+                    <><span className="highlight">Drag & drop your image here</span> or <span className="browse-link">browse files</span></>
                   )}
                 </div>
+                
+                <div className="upload-info">Supports JPEG, PNG, WEBP · Max 10MB</div>
+                
+                <input 
+                  type="file" 
+                  id="file-input" 
+                  className="file-input" 
+                  accept=".jpg,.jpeg,.png,.webp" 
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  aria-label="Upload image file"
+                />
               </div>
 
-              {/* Captions & Audio */}
-              <div className="output-panel">
-                <div className="caption-container">
-                  {viewMode === 'comparison' && results.captions && (
-                    <div className="comparison-models-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                      <div className="model-caption-card" style={{ padding: '0.85rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
-                        <span className="model-badge" style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-primary)', background: 'var(--color-primary-bg)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-block', marginBottom: '0.35rem' }}>BLIP</span>
-                        <p className="model-caption-text" style={{ fontSize: '0.85rem', color: 'var(--color-text)', margin: 0, fontStyle: 'italic' }}>&ldquo;{results.captions.blip}&rdquo;</p>
-                      </div>
-                      <div className="model-caption-card" style={{ padding: '0.85rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
-                        <span className="model-badge" style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-accent)', background: 'var(--color-accent-bg)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-block', marginBottom: '0.35rem' }}>GIT</span>
-                        <p className="model-caption-text" style={{ fontSize: '0.85rem', color: 'var(--color-text)', margin: 0, fontStyle: 'italic' }}>&ldquo;{results.captions.git}&rdquo;</p>
-                      </div>
-                      <div className="model-caption-card" style={{ padding: '0.85rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
-                        <span className="model-badge" style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', color: '#059669', background: 'rgba(5, 150, 105, 0.08)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-block', marginBottom: '0.35rem' }}>ViT-GPT2</span>
-                        <p className="model-caption-text" style={{ fontSize: '0.85rem', color: 'var(--color-text)', margin: 0, fontStyle: 'italic' }}>&ldquo;{results.captions.vit_gpt2}&rdquo;</p>
-                      </div>
-                    </div>
-                  )}
-
-                  <h3 className="panel-subtitle">{viewMode === 'comparison' ? 'Fused Consensus Caption' : 'Generated Description'}</h3>
-                  
-                  <div className="caption-block english-caption">
-                    <div className="caption-header">
-                      <span className="lang-tag">English</span>
-                    </div>
-                    <p 
-                      id="text-caption-en" className="caption-text" tabIndex={0} 
-                      ref={language === 'en' ? captionRef : null} aria-label="English caption"
-                    >
-                      {results.caption_en}
-                    </p>
+              {/* Language Selector */}
+              <div className="controls-panel">
+                <fieldset className="language-selector">
+                  <legend className="section-title">Caption Language / भाषा निवडा</legend>
+                  <div className="radio-group">
+                    <label className="radio-label" htmlFor="lang-en">
+                      <input 
+                        type="radio" id="lang-en" name="language" value="en" 
+                        checked={language === 'en'} onChange={handleRadioChange}
+                      />
+                      <span className="custom-radio"></span>
+                      <span className="label-text">English</span>
+                    </label>
+                    <label className="radio-label" htmlFor="lang-hi">
+                      <input 
+                        type="radio" id="lang-hi" name="language" value="hi" 
+                        checked={language === 'hi'} onChange={handleRadioChange}
+                      />
+                      <span className="custom-radio"></span>
+                      <span className="label-text">Hindi / हिंदी</span>
+                    </label>
+                    <label className="radio-label" htmlFor="lang-mr">
+                      <input 
+                        type="radio" id="lang-mr" name="language" value="mr" 
+                        checked={language === 'mr'} onChange={handleRadioChange}
+                      />
+                      <span className="custom-radio"></span>
+                      <span className="label-text">Marathi / मराठी</span>
+                    </label>
                   </div>
+                </fieldset>
+              </div>
 
-                  {results.caption_translated && (
-                    <div id="caption-translated-block" className={`caption-block ${language === 'mr' ? 'marathi-caption' : 'hindi-caption'}`}>
-                      <div className="caption-header">
-                        <span className="lang-tag">{language === 'mr' ? 'Marathi / मराठी' : 'Hindi / हिंदी'}</span>
-                      </div>
-                      <p 
-                        id="text-caption-translated" className="caption-text" tabIndex={0} 
-                        ref={language === 'hi' || language === 'mr' ? captionRef : null} 
-                        aria-label={language === 'mr' ? "Marathi translation" : "Hindi translation"}
-                      >
-                        {results.caption_translated}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Audio Player */}
-                <div className="audio-container">
-                  <h3 className="panel-subtitle">Audio Narration</h3>
-                  <div className="audio-wrapper">
-                    <audio 
-                      id="audio-player" className="native-audio" controls src={audioSrc}
-                      ref={audioPlayerRef}
-                      onPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
-                      onCanPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
-                      aria-label={`Spoken narration: ${results.caption_translated || results.caption_en}`}
-                    />
-                    
-                    <div className="speed-control-container">
-                      <label htmlFor="playback-speed-select" className="sr-only">Playback Speed</label>
-                      <select 
-                        id="playback-speed-select" className="speed-select" 
-                        value={playbackSpeed} onChange={handleSpeedChange}
-                        aria-label="Select playback speed"
-                      >
-                        <option value="0.75">0.75×</option>
-                        <option value="1.0">1.0× Normal</option>
-                        <option value="1.25">1.25×</option>
-                        <option value="1.5">1.5×</option>
-                        <option value="2.0">2.0×</option>
-                      </select>
-                    </div>
-                    
-                    <a 
-                      id="btn-download" href={audioSrc} className="btn-secondary"
-                      download={`caption_${selectedFile?.name?.split('.')[0] || 'narration'}.mp3`} 
-                      aria-label="Download audio narration as MP3 file"
-                    >
-                      <Download size={18} className="btn-icon" aria-hidden="true" />
-                      Download
-                    </a>
+              {/* Error */}
+              {error && (
+                <div id="error-message" className="error-container" role="alert" aria-live="assertive">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <AlertCircle size={18} />
+                    <span>{error}</span>
                   </div>
                 </div>
+              )}
 
-                {/* VQA Chat */}
-                <div className="chat-interface-card">
-                  <h3 className="panel-subtitle">Ask about this image / सवाल पूछें</h3>
-                  
-                  <div className="chat-messages-box" aria-live="polite">
-                    {chatHistory.length === 0 ? (
-                      <p className="chat-placeholder">Ask anything — e.g., &quot;What color is the car?&quot; or &quot;How many people?&quot;</p>
-                    ) : (
-                      chatHistory.map((msg, idx) => (
-                        <div key={idx} className={`chat-message ${msg.sender}-message`}>
-                          <div className="message-content">
-                            <span className="message-sender-label">{msg.sender === 'user' ? 'You' : 'Aabha'}</span>
-                            <p className="message-text">{msg.text}</p>
-                          </div>
-                          {msg.audioSrc && (
-                            <button 
-                              type="button" className="chat-audio-btn" aria-label="Replay audio answer"
-                              onClick={() => {
-                                setChatAudioSrc(msg.audioSrc);
-                                setTimeout(() => {
-                                  if (chatAudioPlayerRef.current) {
-                                    chatAudioPlayerRef.current.playbackRate = playbackSpeed;
-                                    chatAudioPlayerRef.current.play().catch(err => console.log(err));
-                                  }
-                                }, 50);
-                              }}
-                            >
-                              <Volume2 size={14} />
-                            </button>
+              {/* Generate Button */}
+              <div className="action-bar">
+                <button 
+                  type="button" id="btn-generate" className="btn-primary" 
+                  disabled={!selectedFile || loading} onClick={handleGenerate}
+                  aria-describedby={!selectedFile ? "btn-generate-desc" : undefined}
+                >
+                  {loading ? 'Analyzing...' : 'Generate Caption & Audio'}
+                </button>
+                {!selectedFile && (
+                  <div id="btn-generate-desc" className="sr-only">Upload an image to enable this button.</div>
+                )}
+              </div>
+            </section>
+
+            {/* Loading — Braille Dots */}
+            {loading && (
+              <div id="loading-spinner" className="spinner-container" role="status" aria-live="polite">
+                <BrailleLoader />
+                <p id="loading-text" className="loading-message">Reading your image...</p>
+              </div>
+            )}
+
+            {/* Results */}
+            {results && (
+              <section id="results-section" ref={resultsRef} className="card results-fade-in" aria-labelledby="results-heading">
+                <h2 id="results-heading" className="section-title" style={{ display: 'flex', alignItems: 'center', marginBottom: '1.5rem' }}>
+                  <AudioWaveformSvg />
+                  Narration Results
+                </h2>
+                
+                <div className="results-grid">
+                  {/* Image Preview */}
+                  <div className="preview-panel">
+                    <h3 className="panel-subtitle">Uploaded Image</h3>
+                    <div className="image-preview-container">
+                      {imagePreviewUrl && (
+                        <img 
+                          id="image-preview" src={imagePreviewUrl} 
+                          alt={`Uploaded image. AI generated caption: ${results.caption_en}`} 
+                          className="image-preview" 
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Captions & Audio */}
+                  <div className="output-panel">
+                    {/* Classification Result */}
+                    {results.classification && modelChoice !== 'blip' && (
+                      <div className="classification-result">
+                        <div className="classification-icon">
+                          <Eye size={20} />
+                        </div>
+                        <div className="classification-details">
+                          <div className="classification-label">Custom ViT Detection</div>
+                          {results.classification.available ? (
+                            <>
+                              <div className="classification-name">{results.classification.class_name}</div>
+                              <div className="classification-confidence">
+                                {(results.classification.confidence * 100).toFixed(1)}% confidence
+                              </div>
+                            </>
+                          ) : (
+                            <div className="classification-unavailable">
+                              ViT model not trained yet — run train.py to enable
+                            </div>
                           )}
                         </div>
-                      ))
+                      </div>
                     )}
-                    <div ref={chatBottomRef} />
+
+                    <div className="caption-container">
+                      <h3 className="panel-subtitle">Generated Description</h3>
+                      
+                      <div className="caption-block english-caption">
+                        <div className="caption-header">
+                          <span className="lang-tag">English</span>
+                        </div>
+                        <p 
+                          id="text-caption-en" className="caption-text" tabIndex={0} 
+                          ref={language === 'en' ? captionRef : null} aria-label="English caption"
+                        >
+                          {results.description || results.caption_en}
+                        </p>
+                      </div>
+
+                      {results.caption_translated && (
+                        <div id="caption-translated-block" className={`caption-block ${language === 'mr' ? 'marathi-caption' : 'hindi-caption'}`}>
+                          <div className="caption-header">
+                            <span className="lang-tag">{language === 'mr' ? 'Marathi / मराठी' : 'Hindi / हिंदी'}</span>
+                          </div>
+                          <p 
+                            id="text-caption-translated" className="caption-text" tabIndex={0} 
+                            ref={language === 'hi' || language === 'mr' ? captionRef : null} 
+                            aria-label={language === 'mr' ? "Marathi translation" : "Hindi translation"}
+                          >
+                            {results.caption_translated}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Audio Player */}
+                    <div className="audio-container">
+                      <h3 className="panel-subtitle">Audio Narration</h3>
+                      <div className="audio-wrapper">
+                        <audio 
+                          id="audio-player" className="native-audio" controls src={audioSrc}
+                          ref={audioPlayerRef}
+                          onPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
+                          onCanPlay={(e) => { e.target.playbackRate = playbackSpeed; }}
+                          aria-label={`Spoken narration: ${results.caption_translated || results.description || results.caption_en}`}
+                        />
+                        
+                        <div className="speed-control-container">
+                          <label htmlFor="playback-speed-select" className="sr-only">Playback Speed</label>
+                          <select 
+                            id="playback-speed-select" className="speed-select" 
+                            value={playbackSpeed} onChange={handleSpeedChange}
+                            aria-label="Select playback speed"
+                          >
+                            <option value="0.75">0.75×</option>
+                            <option value="1.0">1.0× Normal</option>
+                            <option value="1.25">1.25×</option>
+                            <option value="1.5">1.5×</option>
+                            <option value="2.0">2.0×</option>
+                          </select>
+                        </div>
+                        
+                        <a 
+                          id="btn-download" href={audioSrc} className="btn-secondary"
+                          download={`caption_${selectedFile?.name?.split('.')[0] || 'narration'}.mp3`} 
+                          aria-label="Download audio narration as MP3 file"
+                        >
+                          <Download size={18} className="btn-icon" aria-hidden="true" />
+                          Download
+                        </a>
+                      </div>
+                    </div>
+
+                    {/* VQA Chat */}
+                    <div className="chat-interface-card">
+                      <h3 className="panel-subtitle">Ask about this image / सवाल पूछें</h3>
+                      
+                      <div className="chat-messages-box" aria-live="polite">
+                        {chatHistory.length === 0 ? (
+                          <p className="chat-placeholder">Ask anything — e.g., &quot;What color is the car?&quot; or &quot;How many people?&quot;</p>
+                        ) : (
+                          chatHistory.map((msg, idx) => (
+                            <div key={idx} className={`chat-message ${msg.sender}-message`}>
+                              <div className="message-content">
+                                <span className="message-sender-label">{msg.sender === 'user' ? 'You' : 'Aabha'}</span>
+                                <p className="message-text">{msg.text}</p>
+                              </div>
+                              {msg.audioSrc && (
+                                <button 
+                                  type="button" className="chat-audio-btn" aria-label="Replay audio answer"
+                                  onClick={() => {
+                                    setChatAudioSrc(msg.audioSrc);
+                                    setTimeout(() => {
+                                      if (chatAudioPlayerRef.current) {
+                                        chatAudioPlayerRef.current.playbackRate = playbackSpeed;
+                                        chatAudioPlayerRef.current.play().catch(err => console.log(err));
+                                      }
+                                    }, 50);
+                                  }}
+                                >
+                                  <Volume2 size={14} />
+                                </button>
+                              )}
+                            </div>
+                          ))
+                        )}
+                        <div ref={chatBottomRef} />
+                      </div>
+                      
+                      <form onSubmit={handleChatSubmit} className="chat-input-form">
+                        <input 
+                          type="text" id="chat-question-input" ref={chatInputRef}
+                          className="chat-text-input" value={chatQuestion}
+                          onChange={(e) => setChatQuestion(e.target.value)}
+                          placeholder="Ask a question about the image..."
+                          disabled={chatLoading} aria-label="Type your question about the image"
+                        />
+                        <button 
+                          type="submit" className="btn-chat-submit" 
+                          disabled={!chatQuestion.trim() || chatLoading}
+                        >
+                          {chatLoading ? 'Thinking...' : 'Ask'}
+                        </button>
+                      </form>
+                      
+                      <audio ref={chatAudioPlayerRef} src={chatAudioSrc} style={{ display: 'none' }} />
+                    </div>
                   </div>
-                  
-                  <form onSubmit={handleChatSubmit} className="chat-input-form">
-                    <input 
-                      type="text" id="chat-question-input" ref={chatInputRef}
-                      className="chat-text-input" value={chatQuestion}
-                      onChange={(e) => setChatQuestion(e.target.value)}
-                      placeholder="Ask a question about the image..."
-                      disabled={chatLoading} aria-label="Type your question about the image"
+                </div>
+              </section>
+            )}
+          </>
+        )}
+
+        {/* ===================================================================
+            CAMERA MODE
+            =================================================================== */}
+        {mode === 'camera' && (
+          <section className="card" aria-labelledby="camera-heading">
+            <h2 id="camera-heading" className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+              <Camera size={22} />
+              Live Camera Detection
+            </h2>
+
+            <div className="camera-section">
+              {/* Camera Feed */}
+              <div className="camera-feed-container">
+                {cameraActive ? (
+                  <>
+                    <video 
+                      ref={videoRef} 
+                      className="camera-feed mirror" 
+                      autoPlay 
+                      playsInline 
+                      muted
+                      aria-label="Live camera feed"
                     />
+                    {/* Detection overlay on video */}
+                    {cameraDetection && (
+                      <div className="detection-overlay" aria-live="polite">
+                        <div className="detection-overlay-icon">
+                          <Eye size={16} />
+                        </div>
+                        <div className="detection-overlay-text">
+                          {cameraDetection.classification?.available && cameraDetection.classification.class_name ? (
+                            <>
+                              <div className="detection-overlay-class">
+                                {cameraDetection.classification.class_name}
+                                <span style={{ opacity: 0.7, fontSize: '0.8em', marginLeft: '0.5rem' }}>
+                                  {(cameraDetection.classification.confidence * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                              <div className="detection-overlay-caption">{cameraDetection.description}</div>
+                            </>
+                          ) : (
+                            <div className="detection-overlay-caption">{cameraDetection.description}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="camera-placeholder">
+                    <Camera size={64} className="camera-placeholder-icon" />
+                    <p>Click &quot;Start Camera&quot; to begin live object detection. Your camera feed stays on your device.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Hidden canvas for frame capture */}
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+              {/* Camera Controls */}
+              <div className="camera-controls">
+                {!cameraActive ? (
+                  <button 
+                    type="button" 
+                    className="btn-camera btn-camera-start"
+                    onClick={startCamera}
+                    aria-label="Start camera for live detection"
+                  >
+                    <Camera size={18} /> Start Camera
+                  </button>
+                ) : (
+                  <>
                     <button 
-                      type="submit" className="btn-chat-submit" 
-                      disabled={!chatQuestion.trim() || chatLoading}
+                      type="button" 
+                      className="btn-camera btn-camera-stop"
+                      onClick={stopCamera}
+                      aria-label="Stop camera"
                     >
-                      {chatLoading ? 'Thinking...' : 'Ask'}
+                      Stop Camera
                     </button>
-                  </form>
-                  
-                  <audio ref={chatAudioPlayerRef} src={chatAudioSrc} style={{ display: 'none' }} />
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={detectFromFrame}
+                      disabled={cameraLoading}
+                      aria-label="Trigger immediate detection"
+                    >
+                      <RefreshCw size={16} className={cameraLoading ? 'spin' : ''} /> Detect Now
+                    </button>
+                  </>
+                )}
+
+                {/* Auto-speak toggle */}
+                <label className="auto-speak-toggle">
+                  <div 
+                    className={`toggle-switch ${autoSpeak ? 'active' : ''}`}
+                    onClick={() => setAutoSpeak(!autoSpeak)}
+                    role="switch"
+                    aria-checked={autoSpeak}
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAutoSpeak(!autoSpeak); }}}
+                  />
+                  Auto-speak
+                </label>
+
+                {/* Detection interval */}
+                <select 
+                  className="interval-select"
+                  value={detectionInterval}
+                  onChange={(e) => setDetectionInterval(parseInt(e.target.value))}
+                  aria-label="Detection interval"
+                >
+                  <option value="2000">Every 2s</option>
+                  <option value="3000">Every 3s</option>
+                  <option value="5000">Every 5s</option>
+                  <option value="10000">Every 10s</option>
+                </select>
+
+                {/* Language selector for camera */}
+                <select 
+                  className="interval-select"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  aria-label="Detection language"
+                >
+                  <option value="en">English</option>
+                  <option value="hi">Hindi</option>
+                  <option value="mr">Marathi</option>
+                </select>
+
+                {/* Status indicator */}
+                <div className="camera-status">
+                  <div className={`status-dot ${cameraActive ? 'active' : ''}`} />
+                  {cameraActive ? (cameraLoading ? 'Detecting...' : 'Active') : 'Inactive'}
                 </div>
               </div>
+
+              {/* Error */}
+              {error && (
+                <div className="error-container" role="alert" aria-live="assertive">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <AlertCircle size={18} />
+                    <span>{error}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Detection Results Panel */}
+              {cameraDetection && (
+                <div className="camera-results results-fade-in">
+                  {/* Classification */}
+                  {cameraDetection.classification?.available && modelChoice !== 'blip' && (
+                    <div className="classification-result">
+                      <div className="classification-icon">
+                        <Eye size={20} />
+                      </div>
+                      <div className="classification-details">
+                        <div className="classification-label">Custom ViT Detection</div>
+                        <div className="classification-name">{cameraDetection.classification.class_name}</div>
+                        <div className="classification-confidence">
+                          {(cameraDetection.classification.confidence * 100).toFixed(1)}% confidence
+                          {cameraDetection.classification.top3 && cameraDetection.classification.top3.length > 1 && (
+                            <span style={{ marginLeft: '0.75rem', opacity: 0.7 }}>
+                              Also: {cameraDetection.classification.top3.slice(1).map(p => 
+                                `${p.class_name} ${(p.confidence * 100).toFixed(0)}%`
+                              ).join(', ')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Scene Description */}
+                  <div className="caption-block">
+                    <div className="caption-header">
+                      <span className="lang-tag">Scene Description</span>
+                    </div>
+                    <p className="caption-text" tabIndex={0} aria-label="Scene description">
+                      {cameraDetection.description}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Hidden audio element for camera narration */}
+              <audio ref={cameraAudioRef} style={{ display: 'none' }} />
             </div>
           </section>
         )}
@@ -753,7 +1173,6 @@ export default function Home() {
       <footer className="app-footer">
         <div className="footer-container">
           <div className="footer-braille-art" aria-hidden="true">
-            {/* Braille pattern for "Aabha" — decorative only */}
             {[1,0,1,0,1,1,0,1,0,1,1,0].map((filled, i) => (
               <div key={i} className="dot" style={{ opacity: filled ? 1 : 0.2 }}></div>
             ))}
