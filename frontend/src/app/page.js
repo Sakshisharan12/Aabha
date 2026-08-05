@@ -153,6 +153,7 @@ export default function Home() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
+  const [announcement, setAnnouncement] = useState('');
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
   // VQA Chat state
@@ -363,6 +364,7 @@ export default function Home() {
   const processFile = (file) => {
     setError(null);
     setResults(null);
+    setAnnouncement('');
 
     if (!ALLOWED_TYPES.includes(file.type)) {
       setError(`Unsupported file format (${file.type || 'unknown'}). Please upload a JPEG, PNG, or WEBP image.`);
@@ -433,6 +435,12 @@ export default function Home() {
       const data = await response.json();
       setResults(data);
       playBeep('success');
+
+      const oursCls = data.ours?.classification?.available ? data.ours.classification.class_name : null;
+      const capableCount = data.capable?.available ? (data.capable.detections?.length || 0) : 0;
+      setAnnouncement(
+        `Comparison ready. Ours detected ${oursCls || 'no object class'}. Capable model detected ${capableCount} object${capableCount === 1 ? '' : 's'}.`
+      );
 
       setTimeout(() => {
         resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -881,6 +889,7 @@ export default function Home() {
                   <AudioWaveformSvg />
                   Model Comparison — Ours vs Capable
                 </h2>
+                <p id="results-live" className="sr-only" role="status" aria-live="polite">{announcement}</p>
 
                 <div className="results-grid">
                   {/* Image Preview with capable-model bounding boxes */}
