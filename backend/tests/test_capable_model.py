@@ -36,3 +36,19 @@ class TestNormalizeDetections:
         result = [{"label": "thing"}]
         out = _normalize_detections(result)
         assert out[0]["box"] == [0, 0, 0, 0]
+
+
+class TestCapableUnavailable:
+    def test_summary_reports_unavailable_when_not_loaded(self):
+        """When Florence-2 is not loaded, _capable_summary must degrade gracefully."""
+        import capable_model
+        from vision_model import _capable_summary
+        from PIL import Image
+
+        # Ensure the capable model is not loaded in this test process
+        assert capable_model.get_status()["available"] is False
+        img = Image.new("RGB", (32, 32), color=(0, 0, 0))
+        summary = _capable_summary(img)
+        assert summary["available"] is False
+        assert summary["detections"] == []
+        assert summary["error"] is not None
