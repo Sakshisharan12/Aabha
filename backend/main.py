@@ -78,6 +78,23 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+MAX_ANALYSIS_DIM = int(os.getenv("MAX_ANALYSIS_DIM", "2048"))
+
+
+def _cap_image_dimensions(image: Image.Image) -> Image.Image:
+    """Downscale oversized images so inference latency/memory stay bounded.
+
+    Real-world camera photos are often 3000px+, which bloats inference time
+    without improving detections. Cap the longest edge to MAX_ANALYSIS_DIM.
+    """
+    longest = max(image.width, image.height)
+    if longest <= MAX_ANALYSIS_DIM:
+        return image
+    scale = MAX_ANALYSIS_DIM / longest
+    new_size = (max(1, int(image.width * scale)), max(1, int(image.height * scale)))
+    return image.resize(new_size, Image.Resampling.BILINEAR)
+
+
 async def _build_audio_payload(text: str, lang: str) -> dict:
     """Translate (if needed), synthesize speech, and build a per-panel audio payload."""
     translated = None
@@ -158,9 +175,9 @@ async def create_caption(
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
-    # --- Open the image ---
+    # --- Open the image (downscale very large images to bound latency/memory) ---
     try:
-        image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+        image = _cap_image_dimensions(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
     except Exception:
         raise HTTPException(
             status_code=400,
@@ -250,9 +267,9 @@ async def detect_from_frame(
     if len(frame_bytes) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="Frame is too large.")
 
-    # --- Open the image ---
+    # --- Open the image (downscale very large frames to bound latency/memory) ---
     try:
-        image = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
+        image = _cap_image_dimensions(Image.open(io.BytesIO(frame_bytes)).convert("RGB"))
     except Exception:
         raise HTTPException(
             status_code=400,
