@@ -63,7 +63,9 @@ def load_capable_model():
         print(f"[capable] Loading {MASL_MODEL_ID} onto device: {DEVICE}...")
         _processor = AutoProcessor.from_pretrained(MASL_MODEL_ID, trust_remote_code=True)
         _model = AutoModelForCausalLM.from_pretrained(
-            MASL_MODEL_ID, trust_remote_code=True
+            MASL_MODEL_ID,
+            trust_remote_code=True,
+            attn_implementation="eager",  # avoid SDPA/flash code paths on CPU
         ).to(DEVICE)
 
         # Florence-2 remote code predates the `_supports_sdpa` attribute that
@@ -107,6 +109,7 @@ def generate_caption(image: Image.Image) -> str:
             max_new_tokens=1024,
             do_sample=False,
             num_beams=3,
+            use_cache=False,  # Florence-2 remote code is incompatible with the new KV-Cache format
         )
 
     generated_text = proc.batch_decode(generated_ids, skip_special_tokens=False)[0]
@@ -143,6 +146,7 @@ def detect_objects(image: Image.Image, max_objects: int = 20) -> list:
             max_new_tokens=1024,
             do_sample=False,
             num_beams=3,
+            use_cache=False,  # Florence-2 remote code is incompatible with the new KV-Cache format
         )
 
     generated_text = proc.batch_decode(generated_ids, skip_special_tokens=False)[0]
@@ -152,18 +156,28 @@ def detect_objects(image: Image.Image, max_objects: int = 20) -> list:
         image_size=(image.width, image.height),
     )
 
-    detections = parsed.get("<OD>") or []
-    # Normalize field names: HF returns {"label", "bbox"}
+    # Normalize the OD parse into a uniform list of {label, score, box}.
+    # Newer transformers returns {"bboxes": [...], "labels": [...]}, while
+    # older versions return a list of {"label", "bbox"} dicts.
+    result = parsed.get("<OD>") or []
     out = []
-    for det in detections[:max_objects]:
-        label = det.get("label", "object")
-        bbox = det.get("bbox", [0, 0, 0, 0])
-        out.append({
-            "label": label,
-            "score": None,
-            "box": [int(v) for v in bbox],
-        })
-    return out
+    if isinstance(result, dict):
+        labels = result.get("labels", [])
+        boxes = result.get("bboxes", [])
+        for label, bbox in zip(labels, boxes):
+            out.append({
+                "label": label,
+                "score": None,
+                "box": [int(v) for v in bbox],
+            })
+    else:
+        for det in result:
+            out.append({
+                "label": det.get("label", "object"),
+                "score": None,
+                "box": [int(v) for v in det.get("bbox", [0, 0, 0, 0])],
+            })
+    return out[:max_objects]
 
 
 def get_status() -> dict:
