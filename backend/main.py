@@ -1,46 +1,70 @@
 """
-main.py — FastAPI Backend for AI Caption Generator
+main.py — FastAPI Backend for Aabha (Accessible AI Vision Assistant)
 
-Serves the REST API that the Next.js frontend calls:
-  POST /api/caption   — Upload image, get caption + audio back
+Endpoints:
+  POST /api/caption   — Upload image, get OURS vs CAPABLE comparison + audio
+  POST /api/detect    — Send camera frame (base64), get comparison + audio (fast path)
+  POST /api/chat      — Ask a question about an image, get answer + audio
+  GET  /api/models    — Report which models are loaded
   GET  /api/health    — Health check
 
-The BLIP model is loaded once at startup and kept in memory.
+Models:
+  - OURS:    Custom ViT (CIFAR-10, from scratch) + BLIP (captioning + VQA)
+  - CAPABLE: Florence-2 (open-vocabulary detection + detailed captioning)
+  Both pipelines run concurrently per request (see analyze_comparison).
 """
 
+import asyncio
 import base64
+import logging
 import os
+import io
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
-import io
 
-from caption_model import generate_caption, generate_answer, load_model
+from vision_model import load_models, generate_answer, analyze_comparison
+import vision_model
+import capable_model
 from tts import caption_to_audio
 from translate import translate_caption
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("aabha")
+
+# In-process rate limiter keyed on client IP (protects the CPU-heavy endpoints)
+limiter = Limiter(key_func=get_remote_address)
+
 
 # ---------------------------------------------------------------------------
-# App lifespan: load the BLIP model once when the server starts
+# App lifespan: load the models once when the server starts
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the BLIP model at startup, clean up on shutdown."""
-    load_model()
+    """Load the captioning, classification, and capable models at startup."""
+    load_models()
+    capable_model.load_capable_model()
     yield
-    # Cleanup (if needed) goes here
 
 
 # ---------------------------------------------------------------------------
 # Create the FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="AI Caption Generator API",
-    description="Accessible image-to-speech captioning API powered by BLIP",
-    version="1.0.0",
+    title="Aabha - Accessible AI Vision Assistant API",
+    description="Image captioning, object classification, and VQA for visually impaired users",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -58,6 +82,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.state.limiter = limiter
+
+
+# ---------------------------------------------------------------------------
+# Global exception handler — surface 500 tracebacks instead of swallowing them
+# ---------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled error on %s %s:\n%s", request.method, request.url.path, traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}"},
+    )
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -67,27 +107,85 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+MAX_ANALYSIS_DIM = int(os.getenv("MAX_ANALYSIS_DIM", "2048"))
+
+
+def _cap_image_dimensions(image: Image.Image) -> Image.Image:
+    """Downscale oversized images so inference latency/memory stay bounded.
+
+    Real-world camera photos are often 3000px+, which bloats inference time
+    without improving detections. Cap the longest edge to MAX_ANALYSIS_DIM.
+    """
+    longest = max(image.width, image.height)
+    if longest <= MAX_ANALYSIS_DIM:
+        return image
+    scale = MAX_ANALYSIS_DIM / longest
+    new_size = (max(1, int(image.width * scale)), max(1, int(image.height * scale)))
+    return image.resize(new_size, Image.Resampling.BILINEAR)
+
+
+async def _build_audio_payload(text: str, lang: str) -> dict:
+    """Translate (if needed), synthesize speech, and build a per-panel audio payload."""
+    translated = None
+    if lang in ["hi", "mr"]:
+        try:
+            translated = translate_caption(text, target_lang=lang)
+        except RuntimeError as e:
+            translated = None
+            logger.warning("Translation failed, falling back to English: %s", e)
+
+    final_text = translated if translated else text
+    tts_lang = lang if (lang in ["hi", "mr"] and translated) else "en"
+    audio_bytes = await caption_to_audio(final_text, lang=tts_lang)
+    return {
+        "text_for_tts": final_text,
+        "translated": translated,
+        "lang": tts_lang,
+        "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
+        "audio_format": "mp3",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@app.get("/api/models")
+async def models_status():
+    """Report which models are loaded and ready."""
+    return {
+        "ours": vision_model.get_status(),
+        "capable": capable_model.get_status(),
+    }
+
+
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint — returns 200 if the server and model are ready."""
-    return {"status": "healthy", "model": "blip-image-captioning-base"}
+    """Health check — returns 200 if the server and models are ready."""
+    return {
+        "status": "healthy",
+        "models": {
+            "blip": "Salesforce/blip-image-captioning-base",
+            "custom_vit": "ViT-Tiny (CIFAR-10, trained from scratch)",
+            "capable": capable_model.get_status()["model"],
+        }
+    }
 
 
 @app.post("/api/caption")
+@limiter.limit("10/minute")
 async def create_caption(
+    request: Request,
     file: UploadFile = File(..., description="Image file (JPG, PNG, or WEBP, max 10MB)"),
     lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
+    model_choice: str = Form(default="combined", description="Model choice: 'combined', 'vit', or 'blip'"),
 ):
     """
-    Upload an image and receive a caption + audio.
-
-    - Validates file type and size.
-    - Generates an English caption using BLIP.
-    - Optionally translates to Hindi or Marathi.
-    - Generates TTS audio for the final caption.
-    - Returns everything as JSON (audio is base64-encoded).
+    Upload an image and receive:
+    - BLIP caption (scene description)
+    - Custom ViT classification (object detection)
+    - TTS audio narration
     """
 
     # --- Validate file extension ---
@@ -110,64 +208,161 @@ async def create_caption(
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
-    # --- Open the image ---
+    # --- Open the image (downscale very large images to bound latency/memory) ---
     try:
-        image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+        image = _cap_image_dimensions(Image.open(io.BytesIO(file_bytes)).convert("RGB"))
     except Exception:
         raise HTTPException(
             status_code=400,
             detail="Could not open the file as an image. It may be corrupted or not a valid image format.",
         )
 
-    # --- Generate English caption ---
+    # --- Generate OURS vs CAPABLE comparison (runs concurrently) ---
     try:
-        caption_en = generate_caption(image)
+        comparison = await analyze_comparison(image, model_choice=model_choice)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Caption generation failed unexpectedly: {str(e)}",
+            detail=f"Scene analysis failed: {str(e)}",
         )
 
-    # --- Translate if Hindi or Marathi is requested ---
-    caption_translated = None
-    if lang in ["hi", "mr"]:
-        try:
-            caption_translated = translate_caption(caption_en, target_lang=lang)
-        except RuntimeError as e:
-            # Translation failed — still return the English caption + a warning
-            caption_translated = None
-            print(f"Translation warning: {e}")
+    ours = comparison["ours"]
+    capable = comparison["capable"]
 
-    # --- Determine the final caption for TTS ---
-    final_caption = caption_translated if caption_translated else caption_en
-    tts_lang = lang if (lang in ["hi", "mr"] and caption_translated) else "en"
-
-    # --- Generate audio ---
+    # --- Build per-panel TTS audio (translated per language) concurrently ---
     try:
-        audio_bytes = await caption_to_audio(final_caption, lang=tts_lang)
-        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+        ours_audio_task = asyncio.create_task(_build_audio_payload(ours["description"], lang))
+        capable_audio_task = (
+            asyncio.create_task(_build_audio_payload(capable.get("caption") or "An image.", lang))
+            if capable["available"]
+            else None
+        )
+        ours_audio = await ours_audio_task
+        capable_audio = await capable_audio_task if capable_audio_task else None
     except (ValueError, RuntimeError) as e:
         raise HTTPException(
             status_code=500,
             detail=f"Audio generation failed: {str(e)}",
         )
 
-    # --- Return the response ---
+    # --- Return the comparison response ---
     return JSONResponse(
         content={
-            "caption_en": caption_en,
-            "caption_translated": caption_translated,
-            "lang": tts_lang,
-            "audio_base64": audio_base64,
-            "audio_format": "mp3",
+            "ours": {
+                "caption_en": ours["caption"],
+                "description": ours["description"],
+                "classification": ours["classification"],
+                "model_choice": ours["model_choice"],
+                **ours_audio,
+            },
+            "capable": {
+                "available": capable["available"],
+                "caption": capable.get("caption") or "",
+                "detections": capable.get("detections") or [],
+                "error": capable.get("error"),
+                **(capable_audio if capable_audio else {}),
+            },
+        }
+    )
+
+
+@app.post("/api/detect")
+@limiter.limit("30/minute")
+async def detect_from_frame(
+    request: Request,
+    frame: str = Form(..., description="Base64-encoded camera frame (JPEG/PNG)"),
+    lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
+    model_choice: str = Form(default="combined", description="Model choice: 'combined', 'vit', or 'blip'"),
+):
+    """
+    Detect objects from a live camera frame.
+
+    Accepts a base64-encoded image frame (from webcam capture).
+    Returns classification + caption + audio for blind user narration.
+    Optimized for speed in the live camera loop.
+    """
+
+    # --- Decode the base64 frame ---
+    try:
+        # Handle data URL format: "data:image/jpeg;base64,/9j/4AAQ..."
+        if "," in frame:
+            frame = frame.split(",", 1)[1]
+        frame_bytes = base64.b64decode(frame)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid base64-encoded frame.",
+        )
+
+    if len(frame_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty frame received.")
+
+    if len(frame_bytes) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Frame is too large.")
+
+    # --- Open the image (downscale very large frames to bound latency/memory) ---
+    try:
+        image = _cap_image_dimensions(Image.open(io.BytesIO(frame_bytes)).convert("RGB"))
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not decode the frame as an image.",
+        )
+
+    # --- Generate OURS vs CAPABLE comparison (runs concurrently) ---
+    try:
+        comparison = await analyze_comparison(image, model_choice=model_choice)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Detection failed: {str(e)}",
+        )
+
+    ours = comparison["ours"]
+    capable = comparison["capable"]
+
+    # --- Build per-panel TTS audio concurrently ---
+    try:
+        ours_audio_task = asyncio.create_task(_build_audio_payload(ours["description"], lang))
+        capable_audio_task = (
+            asyncio.create_task(_build_audio_payload(capable.get("caption") or "An image.", lang))
+            if capable["available"]
+            else None
+        )
+        ours_audio = await ours_audio_task
+        capable_audio = await capable_audio_task if capable_audio_task else None
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Audio generation failed: {str(e)}",
+        )
+
+    return JSONResponse(
+        content={
+            "ours": {
+                "caption_en": ours["caption"],
+                "description": ours["description"],
+                "classification": ours["classification"],
+                "model_choice": ours["model_choice"],
+                **ours_audio,
+            },
+            "capable": {
+                "available": capable["available"],
+                "caption": capable.get("caption") or "",
+                "detections": capable.get("detections") or [],
+                "error": capable.get("error"),
+                **(capable_audio if capable_audio else {}),
+            },
         }
     )
 
 
 @app.post("/api/chat")
+@limiter.limit("20/minute")
 async def chat_image(
+    request: Request,
     file: UploadFile = File(..., description="Image file (JPG, PNG, or WEBP, max 10MB)"),
     question: str = Form(..., description="User question about the image"),
     lang: str = Form(default="en", description="Target language: 'en', 'hi', or 'mr'"),
@@ -222,7 +417,7 @@ async def chat_image(
             answer_translated = translate_caption(answer_en, target_lang=lang)
         except RuntimeError as e:
             answer_translated = None
-            print(f"Translation warning: {e}")
+            logger.warning("Translation failed, falling back to English: %s", e)
 
     # --- Determine the final answer for TTS ---
     final_answer = answer_translated if answer_translated else answer_en

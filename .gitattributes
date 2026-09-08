@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Binary model weights
+*.pth binary
+*.safetensors binary
+*.onnx binary
+
+# Lockfiles keep CRLF on Windows checkouts
+*.lock text eol=lf

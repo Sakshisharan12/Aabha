@@ -1,0 +1,11 @@
+# Build context exclusions
+.git
+**/node_modules
+**/.next
+**/out
+**/__pycache__
+**/.pytest_cache
+backend/venv
+backend/.venv
+vision_transformer_scratch/data
+NOTES.md
