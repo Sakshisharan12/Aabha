@@ -109,7 +109,7 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-MAX_ANALYSIS_DIM = int(os.getenv("MAX_ANALYSIS_DIM", "2048"))
+MAX_ANALYSIS_DIM = int(os.getenv("MAX_ANALYSIS_DIM", "1024"))
 
 
 def _cap_image_dimensions(image: Image.Image) -> Image.Image:
@@ -399,16 +399,17 @@ async def chat_image(
             detail="Could not open the file as an image.",
         )
 
-    # --- Generate answer ---
+    # --- Generate answer (in background thread so event loop stays responsive) ---
     try:
-        answer_en = generate_answer(image, question)
+        answer_en = await asyncio.to_thread(generate_answer, image, question)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Visual question answering failed: {str(e)}",
-        )
+        logger.error("VQA generation error: %s", traceback.format_exc())
+        answer_en = "I could not analyze this image for that question."
+
+    if not answer_en or not answer_en.strip():
+        answer_en = "I could not find a clear answer to that in this image."
 
     # --- Translate to Hindi or Marathi if requested ---
     answer_translated = None
@@ -423,15 +424,13 @@ async def chat_image(
     final_answer = answer_translated if answer_translated else answer_en
     tts_lang = lang if (lang in ["hi", "mr"] and answer_translated) else "en"
 
-    # --- Generate audio ---
+    # --- Generate audio (gracefully fallback if TTS fails) ---
+    audio_base64 = ""
     try:
         audio_bytes = await caption_to_audio(final_answer, lang=tts_lang)
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-    except (ValueError, RuntimeError) as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Audio generation failed: {str(e)}",
-        )
+    except Exception as e:
+        logger.warning("Audio generation failed for chat: %s", e)
 
     # --- Return response ---
     return JSONResponse(

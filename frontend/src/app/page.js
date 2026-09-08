@@ -138,6 +138,13 @@ const DetectionOverlayCanvas = ({ src, detections = [] }) => {
 /* ============================================
    Main Page Component
    ============================================ */
+// Base URL for API calls. In dev (port 3000), calls FastAPI on port 8000 directly
+// to bypass Next.js dev proxy's hardcoded 30-second socket timeout during AI inference.
+const API_BASE =
+  typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL !== undefined
+    ? process.env.NEXT_PUBLIC_API_URL
+    : (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:8000' : '');
+
 export default function Home() {
   // Mode: 'upload' or 'camera'
   const [mode, setMode] = useState('upload');
@@ -191,6 +198,7 @@ export default function Home() {
   const captionRef = useRef(null);
   const chatAudioPlayerRef = useRef(null);
   const chatBottomRef = useRef(null);
+  const chatMessagesBoxRef = useRef(null);
   const chatInputRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -210,6 +218,13 @@ export default function Home() {
   useEffect(() => { languageRef.current = language; }, [language]);
   useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
   useEffect(() => { detectionIntervalRef.current = detectionInterval; }, [detectionInterval]);
+
+  // Auto-scroll chat box when history updates or loading state changes
+  useEffect(() => {
+    if (chatMessagesBoxRef.current) {
+      chatMessagesBoxRef.current.scrollTop = chatMessagesBoxRef.current.scrollHeight;
+    }
+  }, [chatHistory, chatLoading]);
 
   const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
   const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -436,7 +451,7 @@ export default function Home() {
     formData.append('model_choice', modelChoice);
 
     try {
-      const response = await fetch('/api/caption', {
+      const response = await fetch(`${API_BASE}/api/caption`, {
         method: 'POST',
         body: formData,
       });
@@ -507,7 +522,7 @@ export default function Home() {
     formData.append('lang', language);
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         body: formData,
       });
@@ -537,7 +552,8 @@ export default function Home() {
 
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Failed to get answer. Please try again.');
+      const errMsg = err.message || 'Failed to get answer. Please try again.';
+      setChatHistory([...newHistory, { sender: 'ai', text: `Sorry, I couldn't get an answer: ${errMsg}` }]);
       playBeep('error');
     } finally {
       setChatLoading(false);
@@ -580,7 +596,7 @@ export default function Home() {
       formData.append('lang', languageRef.current);
       formData.append('model_choice', modelChoiceRef.current);
 
-      const response = await fetch('/api/detect', {
+      const response = await fetch(`${API_BASE}/api/detect`, {
         method: 'POST',
         body: formData,
       });
@@ -1097,34 +1113,44 @@ export default function Home() {
                     <div className="chat-interface-card">
                       <h3 className="panel-subtitle">Ask about this image / सवाल पूछें</h3>
 
-                      <div className="chat-messages-box" aria-live="polite">
+                      <div ref={chatMessagesBoxRef} className="chat-messages-box" aria-live="polite">
                         {chatHistory.length === 0 ? (
                           <p className="chat-placeholder">Ask anything — e.g., &quot;What color is the car?&quot; or &quot;How many people?&quot;</p>
                         ) : (
-                          chatHistory.map((msg, idx) => (
-                            <div key={idx} className={`chat-message ${msg.sender}-message`}>
-                              <div className="message-content">
-                                <span className="message-sender-label">{msg.sender === 'user' ? 'You' : 'Aabha'}</span>
-                                <p className="message-text">{msg.text}</p>
+                          <>
+                            {chatHistory.map((msg, idx) => (
+                              <div key={idx} className={`chat-message ${msg.sender}-message`}>
+                                <div className="message-content">
+                                  <span className="message-sender-label">{msg.sender === 'user' ? 'You' : 'Aabha'}</span>
+                                  <p className="message-text">{msg.text}</p>
+                                </div>
+                                {msg.audioSrc && (
+                                  <button
+                                    type="button" className="chat-audio-btn" aria-label="Replay audio answer"
+                                    onClick={() => {
+                                      setChatAudioSrc(msg.audioSrc);
+                                      setTimeout(() => {
+                                        if (chatAudioPlayerRef.current) {
+                                          chatAudioPlayerRef.current.playbackRate = playbackSpeed;
+                                          chatAudioPlayerRef.current.play().catch(err => console.log(err));
+                                        }
+                                      }, 50);
+                                    }}
+                                  >
+                                    <Volume2 size={14} />
+                                  </button>
+                                )}
                               </div>
-                              {msg.audioSrc && (
-                                <button
-                                  type="button" className="chat-audio-btn" aria-label="Replay audio answer"
-                                  onClick={() => {
-                                    setChatAudioSrc(msg.audioSrc);
-                                    setTimeout(() => {
-                                      if (chatAudioPlayerRef.current) {
-                                        chatAudioPlayerRef.current.playbackRate = playbackSpeed;
-                                        chatAudioPlayerRef.current.play().catch(err => console.log(err));
-                                      }
-                                    }, 50);
-                                  }}
-                                >
-                                  <Volume2 size={14} />
-                                </button>
-                              )}
-                            </div>
-                          ))
+                            ))}
+                            {chatLoading && (
+                              <div className="chat-message ai-message" style={{ opacity: 0.85 }}>
+                                <div className="message-content">
+                                  <span className="message-sender-label">Aabha</span>
+                                  <p className="message-text" style={{ fontStyle: 'italic' }}>Thinking... / विचार करत आहे...</p>
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )}
                         <div ref={chatBottomRef} />
                       </div>

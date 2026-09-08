@@ -18,7 +18,11 @@ import asyncio
 import time
 import torch
 from PIL import Image
-from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import (
+    BlipProcessor,
+    BlipForConditionalGeneration,
+    BlipForQuestionAnswering,
+)
 
 import capable_model
 
@@ -45,6 +49,11 @@ _vit_available = False
 
 # BLIP load status
 _blip_available = False
+
+# Dedicated VQA Model (Salesforce/blip-vqa-base)
+_vqa_processor = None
+_vqa_model = None
+_vqa_available = False
 
 # CIFAR-10 class names
 CIFAR10_CLASSES = [
@@ -82,6 +91,12 @@ def load_models():
     _blip_model.eval()
     _blip_available = True
     print("  BLIP loaded successfully.")
+
+    # ── Load Dedicated VQA Model (Salesforce/blip-vqa-base) ──
+    try:
+        load_vqa_model()
+    except Exception as e:
+        print(f"  Note: VQA model will load on-demand: {e}")
 
     # ── Load Custom ViT (classification) ──
     if os.path.exists(_VIT_CHECKPOINT):
@@ -172,44 +187,99 @@ def classify_image(image: Image.Image) -> dict:
     }
 
 
+def load_vqa_model():
+    """Load Salesforce/blip-vqa-base for true Visual Question Answering."""
+    global _vqa_processor, _vqa_model, _vqa_available
+    if _vqa_available and _vqa_model is not None:
+        return _vqa_processor, _vqa_model
+    try:
+        print("[VQA] Loading dedicated Salesforce/blip-vqa-base...")
+        _vqa_processor = BlipProcessor.from_pretrained("Salesforce/blip-vqa-base")
+        _vqa_model = BlipForQuestionAnswering.from_pretrained(
+            "Salesforce/blip-vqa-base",
+            use_safetensors=True,
+        ).to(DEVICE)
+        _vqa_model.eval()
+        _vqa_available = True
+        print("[VQA] Salesforce/blip-vqa-base loaded successfully.")
+        return _vqa_processor, _vqa_model
+    except Exception as e:
+        print(f"[VQA] Note: Salesforce/blip-vqa-base not ready yet: {e}")
+        _vqa_available = False
+        return None, None
+
+
 def generate_answer(image: Image.Image, question: str) -> str:
-    """Answer a question about the image using BLIP VQA.
+    """Answer a question about the image with true visual analysis.
 
     Args:
         image: PIL Image.
         question: Question about the image.
 
     Returns:
-        Answer string.
+        Exact, concise answer string based on visual analysis.
     """
-    if not _models_loaded:
-        raise RuntimeError("Models are not loaded. Call load_models() first.")
-
     if not question or not question.strip():
         raise ValueError("Question cannot be empty.")
 
     if image.mode != "RGB":
         image = image.convert("RGB")
 
-    if image.width < 32 or image.height < 32:
-        image = image.resize((224, 224), Image.Resampling.BILINEAR)
+    q = question.strip().lower()
 
-    prompt = f"Question: {question.strip()} Answer:"
-    inputs = _blip_processor(image, text=prompt, return_tensors="pt").to(DEVICE)
+    # 1. Primary: Dedicated VQA model (Salesforce/blip-vqa-base)
+    # Specifically fine-tuned on visual question answering (VQA v2) to answer questions accurately
+    vqa_proc, vqa_mdl = load_vqa_model()
+    if vqa_mdl is not None and vqa_proc is not None:
+        try:
+            inputs = vqa_proc(image, question.strip(), return_tensors="pt").to(DEVICE)
+            with torch.no_grad():
+                output_ids = vqa_mdl.generate(**inputs, max_new_tokens=35)
+            ans = vqa_proc.decode(output_ids[0], skip_special_tokens=True).strip()
+            if ans and len(ans) > 0 and ans.lower() not in ["unanswerable"]:
+                return ans[0].upper() + ans[1:] if len(ans) > 1 else ans.upper()
+        except Exception as e:
+            print(f"[VQA] Error with blip-vqa-base: {e}")
 
-    with torch.no_grad():
-        output_ids = _blip_model.generate(**inputs, max_new_tokens=40)
+    # 2. Text/OCR Reading: If the question asks to read words, text, or letters on the image
+    if any(w in q for w in ["read", "written", "text", "say", "word", "letter", "title", "heading", "name"]):
+        try:
+            ocr_text = capable_model.extract_text(image)
+            if ocr_text:
+                return f"The text reads: {ocr_text}"
+        except Exception as e:
+            print(f"[VQA] OCR extraction error: {e}")
 
-    answer = _blip_processor.decode(output_ids[0], skip_special_tokens=True)
+    # 3. Deep visual inspection via Florence-2 scene analysis
+    try:
+        scene_desc = capable_model.generate_detailed_caption(image)
+        if scene_desc:
+            # If the user asks about color, extract the relevant color observation
+            if "colour" in q or "color" in q:
+                color_words = ["white", "black", "blue", "red", "green", "yellow", "orange", "purple", "pink", "brown", "gray", "grey"]
+                sentences = [s.strip() for s in scene_desc.split(".") if s.strip()]
+                q_nouns = [w for w in q.replace("?", "").split() if len(w) > 2 and w not in ["what", "whats", "the", "colour", "color", "of", "is", "are", "this", "that"]]
+                for s in sentences:
+                    s_lower = s.lower()
+                    if any(c in s_lower for c in color_words):
+                        if any(n in s_lower for n in q_nouns):
+                            return s + "."
+                for s in sentences:
+                    if any(c in s.lower() for c in color_words):
+                        return s + "."
+            return scene_desc
+    except Exception as e:
+        print(f"[VQA] Deep caption error: {e}")
 
-    # Clean up answer
-    lower_answer = answer.lower()
-    if "answer:" in lower_answer:
-        answer = answer.split("answer:")[-1]
-    elif "answer" in lower_answer:
-        answer = answer.split("answer")[-1]
+    # 4. Fallback: Base image caption
+    try:
+        caption = generate_caption(image)
+        if caption:
+            return f"This image shows {caption}."
+    except Exception:
+        pass
 
-    return answer.strip()
+    return "I analyzed the image, but could not determine a specific answer to that question."
 
 
 def describe_scene(image: Image.Image, model_choice: str = "combined") -> dict:

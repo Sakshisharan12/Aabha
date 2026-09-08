@@ -106,9 +106,9 @@ def generate_caption(image: Image.Image) -> str:
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             pixel_values=inputs["pixel_values"],
-            max_new_tokens=1024,
+            max_new_tokens=256 if DEVICE == "cpu" else 1024,
             do_sample=False,
-            num_beams=3,
+            num_beams=1 if DEVICE == "cpu" else 3,
             use_cache=False,  # Florence-2 remote code is incompatible with the new KV-Cache format
         )
 
@@ -119,6 +119,62 @@ def generate_caption(image: Image.Image) -> str:
 
     parsed_text = parsed["<DETAILED_CAPTION>"] if isinstance(parsed, dict) else parsed
     # Strip any residual end-of-chunk tokens
+    return str(parsed_text).replace(_ENDING, "").strip()
+
+
+def generate_detailed_caption(image: Image.Image) -> str:
+    """Produce a deeply detailed scene description (MORE_DETAILED_CAPTION)."""
+    proc, model = _require_model()
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+
+    inputs = proc(text="<MORE_DETAILED_CAPTION>", images=image, return_tensors="pt")
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items() if hasattr(v, "to")}
+
+    with torch.inference_mode():
+        generated_ids = model.generate(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            pixel_values=inputs["pixel_values"],
+            max_new_tokens=256 if DEVICE == "cpu" else 1024,
+            do_sample=False,
+            num_beams=1 if DEVICE == "cpu" else 3,
+            use_cache=False,
+        )
+
+    generated_text = proc.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed = proc.post_process_generation(
+        generated_text, task="<MORE_DETAILED_CAPTION>", image_size=(image.width, image.height)
+    )
+    parsed_text = parsed.get("<MORE_DETAILED_CAPTION>", parsed) if isinstance(parsed, dict) else parsed
+    return str(parsed_text).replace(_ENDING, "").strip()
+
+
+def extract_text(image: Image.Image) -> str:
+    """Run OCR to read any text printed in the image."""
+    proc, model = _require_model()
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+
+    inputs = proc(text="<OCR>", images=image, return_tensors="pt")
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items() if hasattr(v, "to")}
+
+    with torch.inference_mode():
+        generated_ids = model.generate(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            pixel_values=inputs["pixel_values"],
+            max_new_tokens=256 if DEVICE == "cpu" else 1024,
+            do_sample=False,
+            num_beams=1 if DEVICE == "cpu" else 3,
+            use_cache=False,
+        )
+
+    generated_text = proc.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed = proc.post_process_generation(
+        generated_text, task="<OCR>", image_size=(image.width, image.height)
+    )
+    parsed_text = parsed.get("<OCR>", parsed) if isinstance(parsed, dict) else parsed
     return str(parsed_text).replace(_ENDING, "").strip()
 
 
@@ -169,9 +225,9 @@ def detect_objects(image: Image.Image, max_objects: int = 20) -> list:
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             pixel_values=inputs["pixel_values"],
-            max_new_tokens=1024,
+            max_new_tokens=512 if DEVICE == "cpu" else 1024,
             do_sample=False,
-            num_beams=3,
+            num_beams=1 if DEVICE == "cpu" else 3,
             use_cache=False,  # Florence-2 remote code is incompatible with the new KV-Cache format
         )
 
